@@ -8,6 +8,10 @@
           description: 'The user hashed id'
           type: string
           example: 'Opnel5aKBz'
+        vendor_id:
+          description: 'The vendor hashed id'
+          type: string
+          example: 'Opnel5aKBz'
         assigned_user_id:
           description: 'The assigned user hashed id'
           type: string
@@ -36,8 +40,8 @@
           description: 'The currency id of the expense'
           type: string
           example: '2'
-        invoice_category_id:
-          description: 'The invoice category id'
+        category_id:
+          description: 'The expense category id'
           type: string
           example: 'Opnel5aKBz'
         payment_type_id:

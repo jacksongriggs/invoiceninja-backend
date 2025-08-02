@@ -5727,7 +5727,7 @@ paths:
           $ref: "#/components/responses/422"
         default:
           $ref: "#/components/responses/default"
-  /api/v1/reports/credit:
+  /api/v1/reports/credits:
     post:
       tags:
         - reports

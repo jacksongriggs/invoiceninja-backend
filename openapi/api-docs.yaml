@@ -5810,7 +5810,7 @@ paths:
           $ref: "#/components/responses/422"
         default:
           $ref: "#/components/responses/default"
-  /api/v1/reports/credit:
+  /api/v1/reports/credits:
     post:
       tags:
         - reports
@@ -12194,7 +12194,7 @@ paths:
               properties:
                 _method:
                   type: string
-                  example: POST
+                  example: PUT
                 documents:
                   type: array
                   items:
@@ -19602,6 +19602,12 @@ components:
           description: 'Boolean flag determining if the vendor has been deleted'
           type: boolean
           example: true
+        archived_at:
+          description: 'The timestamp when the vendor was archived'
+          type: number
+          format: integer
+          example: 1434342123
+          readOnly: true
         language_id:
           description: 'The language id of the vendor. This is a unique identifier for the language.'
           type: string
@@ -22398,6 +22404,11 @@ components:
           description: 'The subscription associated with this invoice'
           type: string
           example: Opnel5aKBz
+        documents:
+          type: array
+          description: 'An array of documents associated with this invoice'
+          items:
+            $ref: '#/components/schemas/Document'
         
       type: object
     BTRules:
@@ -22423,6 +22434,10 @@ components:
           example: 'Opnel5aKBz'
         user_id:
           description: 'The user hashed id'
+          type: string
+          example: 'Opnel5aKBz'
+        vendor_id:
+          description: 'The vendor hashed id'
           type: string
           example: 'Opnel5aKBz'
         assigned_user_id:
@@ -22453,8 +22468,8 @@ components:
           description: 'The currency id of the expense'
           type: string
           example: '2'
-        invoice_category_id:
-          description: 'The invoice category id'
+        category_id:
+          description: 'The expense category id'
           type: string
           example: 'Opnel5aKBz'
         payment_type_id:
