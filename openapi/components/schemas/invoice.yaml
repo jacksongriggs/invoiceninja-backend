@@ -234,5 +234,10 @@
           description: 'The subscription associated with this invoice'
           type: string
           example: Opnel5aKBz
+        documents:
+          type: array
+          description: 'An array of documents associated with this invoice'
+          items:
+            $ref: '#/components/schemas/Document'
         
       type: object
