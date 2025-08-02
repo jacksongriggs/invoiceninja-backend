@@ -106,6 +106,12 @@
           description: 'Boolean flag determining if the vendor has been deleted'
           type: boolean
           example: true
+        archived_at:
+          description: 'The timestamp when the vendor was archived'
+          type: number
+          format: integer
+          example: 1434342123
+          readOnly: true
         language_id:
           description: 'The language id of the vendor. This is a unique identifier for the language.'
           type: string
