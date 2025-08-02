@@ -517,7 +517,7 @@
               properties:
                 _method:
                   type: string
-                  example: POST
+                  example: PUT
                 documents:
                   type: array
                   items:
