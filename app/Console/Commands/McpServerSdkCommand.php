@@ -275,6 +275,7 @@ class McpServerSdkCommand extends Command
                 
             case 'create':
                 $data = $arguments['data'] ?? $arguments;
+                error_log("MCP: Create data before decoding: " . json_encode($data));
                 
                 // Get the first company and user for context
                 $company = \App\Models\Company::first();
@@ -287,17 +288,22 @@ class McpServerSdkCommand extends Command
                 // Decode any hashed IDs in the data (fields ending with _id)
                 $data = $this->decodeHashedIds($data);
                 
-                // Use the appropriate Factory to create entity with required fields
+                // Use the proper repository and service pattern like the API controllers
                 $factoryClass = "\\App\\Factory\\{$entity}Factory";
-                if (class_exists($factoryClass) && method_exists($factoryClass, 'create')) {
-                    // Create using factory to get all required fields set
+                $repositoryClass = "\\App\\Repositories\\{$entity}Repository";
+                
+                if (class_exists($factoryClass) && method_exists($factoryClass, 'create') && class_exists($repositoryClass)) {
+                    // Create using factory and repository (proper Invoice Ninja pattern)
                     $item = $factoryClass::create($company->id, $user->id);
+                    $repository = new $repositoryClass();
+                    $item = $repository->save($data, $item);
                     
-                    // Then update with the provided data
-                    $item->fill($data);
-                    $item->save();
+                    // Apply service layer business logic if available
+                    if ($item && method_exists($item, 'service')) {
+                        $item = $item->service()->fillDefaults()->save();
+                    }
                 } else {
-                    // Fallback for entities without factories
+                    // Fallback for entities without factories/repositories
                     $data['company_id'] = $company->id;
                     $data['user_id'] = $user->id;
                     $item = $modelClass::create($data);
@@ -387,15 +393,17 @@ class McpServerSdkCommand extends Command
             // Check if field ends with _id and value is a string (hashed ID)
             if (str_ends_with($key, '_id') && is_string($value) && !empty($value)) {
                 try {
-                    // Try to decode the hashed ID
-                    $tempModel = new \App\Models\BaseModel();
+                    // Try to decode the hashed ID using a concrete model
+                    $tempModel = new \App\Models\Client();
                     $decodedId = $tempModel->decodePrimaryKey($value);
                     
                     if ($decodedId) {
+                        error_log("MCP: Decoded {$key}: {$value} -> {$decodedId}");
                         $data[$key] = $decodedId;
                     }
                     // If decoding fails, leave the original value (might be a numeric ID already)
                 } catch (\Exception $e) {
+                    error_log("MCP: Failed to decode {$key}: {$value} - " . $e->getMessage());
                     // If decoding fails, leave the original value
                     continue;
                 }
