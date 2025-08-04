@@ -13,12 +13,16 @@ class McpServerNative
 {
     private Logger $logger;
     private $app; // Laravel application instance
+    private string $mode; // 'stdio' or 'http'
     
-    public function __construct()
+    public function __construct(string $mode = 'stdio')
     {
-        // Initialize logger
+        $this->mode = $mode;
+        
+        // Initialize logger - use stderr for stdio mode to avoid interfering with JSON-RPC output
         $this->logger = new Logger('mcp-server-native');
-        $this->logger->pushHandler(new StreamHandler('php://stdout', $_ENV['LOG_LEVEL'] ?? Logger::INFO));
+        $logStream = ($mode === 'stdio') ? 'php://stderr' : 'php://stdout';
+        $this->logger->pushHandler(new StreamHandler($logStream, $_ENV['LOG_LEVEL'] ?? Logger::INFO));
         
         // Bootstrap Invoice Ninja's Laravel app directly
         $this->bootstrapInvoiceNinja();
@@ -37,8 +41,9 @@ class McpServerNative
             // Load Invoice Ninja's autoloader
             require_once $invoiceNinjaPath . '/vendor/autoload.php';
             
-            // Bootstrap Laravel application
-            $this->app = require_once $invoiceNinjaPath . '/bootstrap/app.php';
+            // Bootstrap Laravel application (Laravel 11 returns true, not app instance)
+            require_once $invoiceNinjaPath . '/bootstrap/app.php';
+            $this->app = app();
             
             // Create HTTP kernel
             $kernel = $this->app->make(\Illuminate\Contracts\Http\Kernel::class);
@@ -66,17 +71,39 @@ class McpServerNative
     
     public function run(): void
     {
+        if ($this->mode === 'stdio') {
+            // Stdio mode - read from stdin in a loop
+            while (!feof(STDIN)) {
+                $line = fgets(STDIN);
+                if ($line === false) break;
+                
+                $line = trim($line);
+                if (empty($line)) continue;
+                
+                $request = json_decode($line, true);
+                if ($request) {
+                    $this->handleRequest($request);
+                }
+            }
+        } else {
+            // HTTP mode - single request/response
+            $this->handleHttpRequest();
+        }
+    }
+    
+    public function handleHttpRequest(): void
+    {
         // Read JSON-RPC request from body
         $input = file_get_contents('php://input');
         
         // Handle both JSON-RPC and simple GET requests for compatibility
-        if (empty($input) && $_SERVER['REQUEST_METHOD'] === 'GET') {
+        if (empty($input) && isset($_SERVER['REQUEST_METHOD']) && $_SERVER['REQUEST_METHOD'] === 'GET') {
             // Simple GET request for health check
             $this->sendJson([
                 'name' => 'invoice-ninja-mcp-native',
                 'version' => '1.0.0',
                 'description' => 'Native MCP server using Invoice Ninja transformers directly',
-                'mode' => 'native',
+                'mode' => $this->mode,
                 'protocol' => 'mcp-json-rpc'
             ]);
             return;
@@ -84,7 +111,11 @@ class McpServerNative
         
         // Parse JSON-RPC request
         $request = json_decode($input, true);
-        
+        $this->handleRequest($request);
+    }
+    
+    private function handleRequest($request): void
+    {
         if (!$request || !isset($request['jsonrpc']) || $request['jsonrpc'] !== '2.0') {
             $this->sendJsonRpcError(null, -32700, 'Parse error');
             return;

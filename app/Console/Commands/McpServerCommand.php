@@ -22,15 +22,17 @@ class McpServerCommand extends Command
      * @var string
      */
     protected $signature = 'ninja:mcp-server 
-                            {--host=0.0.0.0 : The host to bind to}
-                            {--port=8080 : The port to bind to}';
+                            {--stdio : Run in stdio mode for Claude Desktop}
+                            {--http : Run in HTTP mode for network access}
+                            {--host=0.0.0.0 : The host to bind to (HTTP mode only)}
+                            {--port=8080 : The port to bind to (HTTP mode only)}';
 
     /**
      * The console command description.
      *
      * @var string
      */
-    protected $description = 'Start the MCP (Model Context Protocol) server';
+    protected $description = 'Start the MCP (Model Context Protocol) server in stdio or HTTP mode';
 
     /**
      * Execute the console command.
@@ -39,38 +41,50 @@ class McpServerCommand extends Command
      */
     public function handle()
     {
-        $host = $this->option('host');
-        $port = $this->option('port');
-
-        $this->info("Starting MCP server on {$host}:{$port}");
+        $isStdio = $this->option('stdio');
+        $isHttp = $this->option('http');
         
-        // Create temp file for the server
-        $tempFile = tempnam(sys_get_temp_dir(), 'mcp-server-');
-        file_put_contents($tempFile, '<?php
-require_once \'' . base_path('vendor/autoload.php') . '\';
-require_once \'' . app_path('Services/McpServerNative.php') . '\';
-
-use App\Services\McpServerNative;
-
-$server = new McpServerNative();
-$server->run();
-');
-
-        // Start the PHP built-in server
-        $command = sprintf(
-            'php -S %s:%s %s',
-            escapeshellarg($host),
-            escapeshellarg($port),
-            escapeshellarg($tempFile)
-        );
-
-        $this->info("Running: {$command}");
+        // Default to HTTP if neither specified
+        if (!$isStdio && !$isHttp) {
+            $isHttp = true;
+        }
         
-        // This will run until interrupted
-        passthru($command);
+        if ($isStdio && $isHttp) {
+            $this->error('Cannot run in both stdio and HTTP mode simultaneously. Choose one.');
+            return 1;
+        }
         
-        // Clean up
-        @unlink($tempFile);
+        require_once base_path('vendor/autoload.php');
+        require_once app_path('Services/McpServerNative.php');
+        
+        if ($isStdio) {
+            $this->info('Starting MCP server in stdio mode (for Claude Desktop)');
+            $this->info('Reading from stdin, writing to stdout...');
+            
+            $server = new McpServerNative('stdio');
+            $server->run();
+        } else {
+            $host = $this->option('host');
+            $port = $this->option('port');
+            
+            $this->info("Starting MCP server in HTTP mode on {$host}:{$port}");
+            
+            // Create a simple HTTP server that wraps the MCP server
+            $server = new McpServerNative('http');
+            
+            // Use PHP's built-in server with the pre-created router file
+            $router = base_path('bootstrap/mcp-http-server.php');
+            
+            $command = sprintf(
+                'php -S %s:%s %s',
+                escapeshellarg($host),
+                escapeshellarg($port),
+                escapeshellarg($router)
+            );
+            
+            $this->info("Running: {$command}");
+            passthru($command);
+        }
         
         return 0;
     }
