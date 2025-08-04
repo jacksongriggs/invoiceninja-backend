@@ -60,3 +60,6 @@ Route::get('gocardless/oauth/connect/{token}', [GoCardlessOAuthController::class
 Route::redirect('buy_now', 'https://invoiceninja.invoicing.co/client/subscriptions/O5xe7Rwd7r/purchase', 301);
 
 \Illuminate\Support\Facades\Broadcast::routes(['middleware' => ['token_auth']]);
+
+// Catch-all route for React application - must be last
+Route::get('{path}', [BaseController::class, 'flutterRoute'])->where('path', '.*');
