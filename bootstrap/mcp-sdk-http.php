@@ -11,7 +11,19 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST' && $_SERVER['REQUEST_METHOD'] !== 'GET
 }
 
 require_once __DIR__ . '/../vendor/autoload.php';
-require_once __DIR__ . '/app.php';
+
+// Bootstrap Laravel application
+$app = require_once __DIR__ . '/app.php';
+
+// Create the kernel
+$kernel = $app->make(\Illuminate\Contracts\Http\Kernel::class);
+
+// Create a fake request to bootstrap the application
+$request = \Illuminate\Http\Request::capture();
+$response = $kernel->handle($request);
+
+// Ensure the application is fully bootstrapped
+$kernel->terminate($request, $response);
 
 use Mcp\Server\Server;
 use Mcp\Server\HttpServerRunner;
