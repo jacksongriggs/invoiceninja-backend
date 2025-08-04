@@ -58,3 +58,10 @@ _ide_helper.php
 \!/public/index.php
 \!/public/.htaccess
 EOF < /dev/null
+# Payment gateway logos and UI assets from React build
+/public/*.png
+/public/*.svg
+/public/*.jpg
+/public/font-files/
+/public/tinymce/
+EOF < /dev/null
