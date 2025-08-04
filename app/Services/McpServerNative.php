@@ -457,30 +457,52 @@ class McpServerNative
     
     private function sendJsonRpcResult($id, $result): void
     {
-        header('Content-Type: application/json');
-        echo json_encode([
+        $response = [
             'jsonrpc' => '2.0',
             'result' => $result,
             'id' => $id
-        ], JSON_PRETTY_PRINT);
+        ];
+        
+        if ($this->mode === 'http') {
+            header('Content-Type: application/json');
+            echo json_encode($response, JSON_PRETTY_PRINT);
+        } else {
+            // Stdio mode - send compact JSON on a single line
+            echo json_encode($response) . "\n";
+            fflush(STDOUT);
+        }
     }
     
     private function sendJsonRpcError($id, int $code, string $message): void
     {
-        header('Content-Type: application/json');
-        echo json_encode([
+        $response = [
             'jsonrpc' => '2.0',
             'error' => [
                 'code' => $code,
                 'message' => $message
             ],
             'id' => $id
-        ], JSON_PRETTY_PRINT);
+        ];
+        
+        if ($this->mode === 'http') {
+            header('Content-Type: application/json');
+            echo json_encode($response, JSON_PRETTY_PRINT);
+        } else {
+            // Stdio mode - send compact JSON on a single line
+            echo json_encode($response) . "\n";
+            fflush(STDOUT);
+        }
     }
     
     private function sendJson(array $data): void
     {
-        header('Content-Type: application/json');
-        echo json_encode($data, JSON_PRETTY_PRINT);
+        if ($this->mode === 'http') {
+            header('Content-Type: application/json');
+            echo json_encode($data, JSON_PRETTY_PRINT);
+        } else {
+            // Stdio mode - send compact JSON on a single line
+            echo json_encode($data) . "\n";
+            fflush(STDOUT);
+        }
     }
 }
