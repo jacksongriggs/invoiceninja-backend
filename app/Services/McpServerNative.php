@@ -21,8 +21,12 @@ class McpServerNative
         
         // Initialize logger - use stderr for stdio mode to avoid interfering with JSON-RPC output
         $this->logger = new Logger('mcp-server-native');
-        $logStream = ($mode === 'stdio') ? 'php://stderr' : 'php://stdout';
-        $this->logger->pushHandler(new StreamHandler($logStream, $_ENV['LOG_LEVEL'] ?? Logger::INFO));
+        if ($mode === 'stdio') {
+            $this->logger->pushHandler(new StreamHandler('php://stderr', $_ENV['LOG_LEVEL'] ?? Logger::INFO));
+        } else {
+            // For HTTP mode, log to a file to avoid broken pipe issues
+            $this->logger->pushHandler(new StreamHandler('/var/www/html/storage/logs/mcp-server.log', $_ENV['LOG_LEVEL'] ?? Logger::INFO));
+        }
         
         // Bootstrap Invoice Ninja's Laravel app directly
         $this->bootstrapInvoiceNinja();
@@ -54,9 +58,10 @@ class McpServerNative
             $kernel->terminate($request, $response);
             
             // Set the API token for authentication
-            if (isset($_ENV['INVOICE_NINJA_API_TOKEN'])) {
+            $apiToken = getenv('INVOICE_NINJA_API_TOKEN') ?: $_ENV['INVOICE_NINJA_API_TOKEN'] ?? null;
+            if ($apiToken) {
                 // Authenticate as the API user
-                $token = \App\Models\CompanyToken::where('token', $_ENV['INVOICE_NINJA_API_TOKEN'])->first();
+                $token = \App\Models\CompanyToken::where('token', $apiToken)->first();
                 if ($token) {
                     auth()->guard('api')->setUser($token->user);
                 }
@@ -278,57 +283,10 @@ class McpServerNative
                 $entity = substr($entity, 0, -1);
             }
             
-            $controllerClass = "\\App\\Http\\Controllers\\{$entity}Controller";
-            
-            if (!class_exists($controllerClass)) {
-                throw new \Exception("Controller not found: $controllerClass");
-            }
-            
-            // Map action to controller method
-            $methodMap = [
-                'list' => 'index',
-                'get' => 'show',
-                'create' => 'store',
-                'update' => 'update',
-                'delete' => 'destroy'
-            ];
-            
-            $method = $methodMap[$action] ?? null;
-            
-            if (!$method) {
-                throw new \Exception("Unknown action: $action");
-            }
-            
-            // Create controller instance
-            $controller = $this->app->make($controllerClass);
-            
-            // Create request with arguments
-            $request = new \Illuminate\Http\Request();
-            
-            // For create/update operations, use the data field
-            if (in_array($action, ['create', 'update']) && isset($arguments['data'])) {
-                $request->merge($arguments['data']);
-            } else {
-                $request->merge($arguments);
-            }
-            
-            $request->headers->set('X-API-TOKEN', $_ENV['INVOICE_NINJA_API_TOKEN']);
-            
-            // For show/update/delete, we need to resolve the model
-            if (in_array($action, ['get', 'update', 'delete']) && isset($arguments['id'])) {
-                $modelClass = "\\App\\Models\\{$entity}";
-                $model = $modelClass::findOrFail($arguments['id']);
-                $response = $controller->$method($request, $model);
-            } else {
-                $response = $controller->$method($request);
-            }
-            
-            // Get the response content
-            if ($response instanceof \Illuminate\Http\JsonResponse) {
-                $result = json_decode($response->getContent(), true);
-            } else {
-                $result = $response;
-            }
+            // Use internal API calls instead of controllers for consistency
+            $this->logger->info("Calling internal API", ['action' => $action, 'entity' => $entity, 'arguments' => $arguments]);
+            $result = $this->callInternalApi($action, $entity, $arguments);
+            $this->logger->info("API call successful", ['result_keys' => array_keys($result)]);
             
             // Format result for MCP
             $this->sendJsonRpcResult($request['id'] ?? null, [
@@ -357,6 +315,115 @@ class McpServerNative
                 ],
                 'isError' => true
             ]);
+        }
+    }
+    
+    private function callInternalApi(string $action, string $entity, array $arguments): array
+    {
+        // Use Laravel models directly instead of HTTP API calls
+        $modelClass = "\\App\\Models\\{$entity}";
+        
+        if (!class_exists($modelClass)) {
+            throw new \Exception("Model not found: {$modelClass}");
+        }
+        
+        switch ($action) {
+            case 'list':
+                $perPage = $arguments['per_page'] ?? 20;
+                $page = $arguments['page'] ?? 1;
+                
+                // Get paginated results
+                $results = $modelClass::paginate($perPage, ['*'], 'page', $page);
+                
+                // Use transformer if available
+                $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
+                if (class_exists($transformerClass)) {
+                    $transformer = new $transformerClass();
+                    $data = $results->getCollection()->map(function ($item) use ($transformer) {
+                        return $transformer->transform($item);
+                    });
+                } else {
+                    $data = $results->getCollection()->toArray();
+                }
+                
+                return [
+                    'data' => $data,
+                    'meta' => [
+                        'pagination' => [
+                            'total' => $results->total(),
+                            'count' => $results->count(),
+                            'per_page' => $results->perPage(),
+                            'current_page' => $results->currentPage(),
+                            'total_pages' => $results->lastPage(),
+                        ]
+                    ]
+                ];
+                
+            case 'get':
+                if (!isset($arguments['id'])) {
+                    throw new \Exception('ID is required for get operation');
+                }
+                
+                $item = $modelClass::findOrFail($arguments['id']);
+                
+                // Use transformer if available
+                $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
+                if (class_exists($transformerClass)) {
+                    $transformer = new $transformerClass();
+                    $data = $transformer->transform($item);
+                } else {
+                    $data = $item->toArray();
+                }
+                
+                return ['data' => $data];
+                
+            case 'create':
+                $data = $arguments['data'] ?? $arguments;
+                $item = $modelClass::create($data);
+                
+                // Use transformer if available
+                $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
+                if (class_exists($transformerClass)) {
+                    $transformer = new $transformerClass();
+                    $transformedData = $transformer->transform($item);
+                } else {
+                    $transformedData = $item->toArray();
+                }
+                
+                return ['data' => $transformedData];
+                
+            case 'update':
+                if (!isset($arguments['id'])) {
+                    throw new \Exception('ID is required for update operation');
+                }
+                
+                $item = $modelClass::findOrFail($arguments['id']);
+                $updateData = $arguments['data'] ?? array_diff_key($arguments, ['id' => null]);
+                $item->update($updateData);
+                
+                // Use transformer if available
+                $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
+                if (class_exists($transformerClass)) {
+                    $transformer = new $transformerClass();
+                    $transformedData = $transformer->transform($item->fresh());
+                } else {
+                    $transformedData = $item->fresh()->toArray();
+                }
+                
+                return ['data' => $transformedData];
+                
+            case 'delete':
+                if (!isset($arguments['id'])) {
+                    throw new \Exception('ID is required for delete operation');
+                }
+                
+                $item = $modelClass::findOrFail($arguments['id']);
+                $item->delete();
+                
+                return ['message' => "{$entity} deleted successfully"];
+                
+            default:
+                throw new \Exception("Unsupported action: {$action}");
         }
     }
     
