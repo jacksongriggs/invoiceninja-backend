@@ -78,8 +78,41 @@ class McpServerSdkCommand extends Command
             $this->debugLogger->info($message, $context);
         }
         
-        // Also write to stderr for immediate visibility
-        fwrite(STDERR, "[MCP DEBUG] " . $message . (!empty($context) ? " " . json_encode($context) : "") . "\n");
+        // Also write to stderr for immediate visibility during development
+        if (env('APP_DEBUG', false)) {
+            fwrite(STDERR, "[MCP DEBUG] " . $message . (!empty($context) ? " " . json_encode($context) : "") . "\n");
+        }
+    }
+
+    /**
+     * Get entity configuration for creation patterns
+     */
+    private function getEntityConfiguration(string $entity): array
+    {
+        $configs = [
+            // Entities that use repository pattern with service layer
+            'Client' => ['use_repository' => true, 'use_service' => true, 'has_contacts' => true],
+            'Invoice' => ['use_repository' => true, 'use_service' => true, 'has_items' => true],
+            'Quote' => ['use_repository' => true, 'use_service' => true, 'has_items' => true],
+            'Credit' => ['use_repository' => true, 'use_service' => true, 'has_items' => true],
+            'PurchaseOrder' => ['use_repository' => true, 'use_service' => true, 'has_items' => true],
+            'RecurringInvoice' => ['use_repository' => true, 'use_service' => true, 'has_items' => true],
+            
+            // Entities that use repository pattern without service layer
+            'Payment' => ['use_repository' => true, 'use_service' => true],
+            'Expense' => ['use_repository' => true, 'use_service' => false],
+            'Vendor' => ['use_repository' => true, 'use_service' => true, 'has_contacts' => true],
+            'Product' => ['use_repository' => true, 'use_service' => false],
+            'Task' => ['use_repository' => true, 'use_service' => false],
+            
+            // Entities that use direct model operations
+            'Project' => ['use_repository' => false, 'use_service' => true],
+            'TaxRate' => ['use_repository' => false, 'use_service' => false],
+            'Location' => ['use_repository' => false, 'use_service' => false],
+            'GroupSetting' => ['use_repository' => false, 'use_service' => false],
+        ];
+        
+        return $configs[$entity] ?? ['use_repository' => false, 'use_service' => false];
     }
 
     private function generateTools(): array
@@ -108,6 +141,30 @@ class McpServerSdkCommand extends Command
                 'page' => [
                     'type' => 'integer', 
                     'description' => 'Page number (default: 1)'
+                ],
+                'client_id' => [
+                    'type' => 'string',
+                    'description' => 'Filter by client ID (for invoices, quotes, projects, payments)'
+                ],
+                'vendor_id' => [
+                    'type' => 'string',
+                    'description' => 'Filter by vendor ID (for expenses)'
+                ],
+                'is_deleted' => [
+                    'type' => 'boolean',
+                    'description' => 'Include deleted items (default: false)'
+                ],
+                'created_at' => [
+                    'type' => 'string',
+                    'description' => 'Filter by creation date (format: YYYY-MM-DD or YYYY-MM-DD:YYYY-MM-DD for range)'
+                ],
+                'name' => [
+                    'type' => 'string',
+                    'description' => 'Filter by name (partial match for clients, vendors)'
+                ],
+                'status' => [
+                    'type' => 'string',
+                    'description' => 'Filter by status (for invoices, quotes)'
                 ]
             ]);
 
@@ -255,284 +312,463 @@ class McpServerSdkCommand extends Command
         
         switch ($action) {
             case 'list':
-                $this->debugLog("Executing list operation", ['entity' => $entity]);
-                $perPage = $arguments['per_page'] ?? 20;
-                $page = $arguments['page'] ?? 1;
-                
-                // Get paginated results
-                $results = $modelClass::paginate($perPage, ['*'], 'page', $page);
-                
-                // Use transformer if available
-                $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
-                if (class_exists($transformerClass)) {
-                    $transformer = new $transformerClass();
-                    $data = $results->getCollection()->map(function ($item) use ($transformer) {
-                        return $transformer->transform($item);
-                    });
-                } else {
-                    $data = $results->getCollection()->toArray();
-                }
-                
-                return [
-                    'data' => $data,
-                    'meta' => [
-                        'pagination' => [
-                            'total' => $results->total(),
-                            'count' => $results->count(),
-                            'per_page' => $results->perPage(),
-                            'current_page' => $results->currentPage(),
-                            'total_pages' => $results->lastPage(),
-                        ]
-                    ]
-                ];
+                return $this->handleListOperation($entity, $modelClass, $arguments);
                 
             case 'get':
-                $this->debugLog("Executing get operation", ['entity' => $entity]);
-                if (!isset($arguments['id'])) {
-                    throw new \Exception('ID is required for get operation');
-                }
-                
-                // Decode the hashed ID to get the actual database ID
-                $model = new $modelClass();
-                $decodedId = $model->decodePrimaryKey($arguments['id']);
-                
-                if (!$decodedId) {
-                    throw new \Exception("Invalid ID: {$arguments['id']}");
-                }
-                
-                $item = $modelClass::findOrFail($decodedId);
-                
-                // Use transformer if available
-                $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
-                if (class_exists($transformerClass)) {
-                    $transformer = new $transformerClass();
-                    $data = $transformer->transform($item);
-                } else {
-                    $data = $item->toArray();
-                }
-                
-                return ['data' => $data];
+                return $this->handleGetOperation($entity, $modelClass, $arguments);
                 
             case 'create':
-                $this->debugLog("Executing create operation", ['entity' => $entity, 'data' => $arguments]);
-                
-                $data = $arguments['data'] ?? $arguments;
-                
-                // Get the first company and user for context
-                $company = \App\Models\Company::first();
-                $user = \App\Models\User::first();
-                
-                if (!$company || !$user) {
-                    throw new \Exception('No company or user found in the system');
-                }
-                
-                $this->debugLog("Found company and user", ['company_id' => $company->id, 'user_id' => $user->id]);
-                
-                // Decode any hashed IDs in the data (fields ending with _id)
-                $data = $this->decodeHashedIds($data);
-                
-                $this->debugLog("Data after ID decoding", ['data' => $data]);
-                
-                // Check for factory and repository classes
-                $factoryClass = "\\App\\Factory\\{$entity}Factory";
-                $repositoryClass = "\\App\\Repositories\\{$entity}Repository";
-                
-                $this->debugLog("Checking classes", [
-                    'factory' => $factoryClass,
-                    'repository' => $repositoryClass,
-                    'factory_exists' => class_exists($factoryClass),
-                    'repository_exists' => class_exists($repositoryClass)
-                ]);
-                
-                $item = null;
-                
-                // Check if we should use factory pattern (some entities like Project don't have repository save method)
-                if (class_exists($factoryClass) && method_exists($factoryClass, 'create')) {
-                    try {
-                        $this->debugLog("Using factory pattern for {$entity}");
-                        
-                        // Create using factory
-                        $item = $factoryClass::create($company->id, $user->id);
-                        $this->debugLog("Factory created item", ['item_id' => $item->id ?? 'no_id']);
-                        
-                        // Fill with data
-                        $item->fill($data);
-                        $this->debugLog("Item filled with data");
-                        
-                        // Save the item
-                        $item->saveQuietly();
-                        $this->debugLog("Item saved", ['item_id' => $item->id ?? 'no_id']);
-                        
-                        // Special handling for specific entity types
-                        switch ($entity) {
-                            case 'Project':
-                                // Projects need a number if not provided
-                                if (empty($item->number)) {
-                                    $item->number = $this->getNextProjectNumber($item);
-                                    $item->saveQuietly();
-                                    $this->debugLog("Project number generated", ['number' => $item->number]);
-                                }
-                                break;
-                                
-                            case 'Client':
-                            case 'Invoice':
-                            case 'Quote':
-                            case 'Payment':
-                                // These entities might have repository save methods
-                                if (class_exists($repositoryClass) && method_exists($repositoryClass, 'save')) {
-                                    $this->debugLog("Using repository save for {$entity}");
-                                    $repository = new $repositoryClass();
-                                    $item = $repository->save($data, $item);
-                                    $this->debugLog("Repository save completed");
-                                }
-                                break;
-                        }
-                        
-                        // Apply service layer if available (for entities that support it)
-                        if ($item && method_exists($item, 'service')) {
-                            $this->debugLog("Checking service layer for {$entity}");
-                            
-                            try {
-                                $service = $item->service();
-                                
-                                // Only call fillDefaults if it exists
-                                if (method_exists($service, 'fillDefaults')) {
-                                    $this->debugLog("Calling fillDefaults");
-                                    $service->fillDefaults();
-                                }
-                                
-                                // Save through service if available
-                                if (method_exists($service, 'save')) {
-                                    $this->debugLog("Calling service save");
-                                    $item = $service->save();
-                                    $this->debugLog("Service save completed");
-                                }
-                            } catch (\Exception $e) {
-                                $this->debugLog("Service layer processing failed, continuing with basic save", ['error' => $e->getMessage()]);
-                                // Continue with the item as saved
-                            }
-                        }
-                        
-                        // Trigger creation event
-                        event('eloquent.created: App\\Models\\' . $entity, $item);
-                        
-                        $this->debugLog("Entity creation completed successfully", ['entity' => $entity, 'id' => $item->id ?? 'no_id']);
-                        
-                    } catch (\Exception $e) {
-                        $this->debugLog("Factory creation failed", [
-                            'entity' => $entity,
-                            'error' => $e->getMessage(),
-                            'trace' => $e->getTraceAsString()
-                        ]);
-                        throw $e;
-                    }
-                } else {
-                    $this->debugLog("Using simple model creation fallback");
-                    // Fallback for entities without factories/repositories
-                    $data['company_id'] = $company->id;
-                    $data['user_id'] = $user->id;
-                    
-                    try {
-                        $item = $modelClass::create($data);
-                        $this->debugLog("Simple model creation completed", ['item_id' => $item->id ?? 'no_id']);
-                    } catch (\Exception $e) {
-                        $this->debugLog("Simple model creation failed", ['error' => $e->getMessage()]);
-                        throw $e;
-                    }
-                }
-                
-                if (!$item) {
-                    throw new \Exception("Failed to create {$entity}");
-                }
-                
-                // Use transformer if available
-                $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
-                if (class_exists($transformerClass)) {
-                    $transformer = new $transformerClass();
-                    $transformedData = $transformer->transform($item);
-                } else {
-                    $transformedData = $item->toArray();
-                }
-                
-                $this->debugLog("Create operation completed", ['entity' => $entity]);
-                return ['data' => $transformedData];
+                return $this->handleCreateOperation($entity, $modelClass, $arguments);
                 
             case 'update':
-                $this->debugLog("Executing update operation", ['entity' => $entity]);
-                if (!isset($arguments['id'])) {
-                    throw new \Exception('ID is required for update operation');
-                }
-                
-                if (!isset($arguments['data'])) {
-                    throw new \Exception('Data is required for update operation');
-                }
-                
-                // Decode the hashed ID to get the actual database ID
-                $model = new $modelClass();
-                $decodedId = $model->decodePrimaryKey($arguments['id']);
-                
-                if (!$decodedId) {
-                    throw new \Exception("Invalid ID: {$arguments['id']}");
-                }
-                
-                $item = $modelClass::findOrFail($decodedId);
-                
-                // Decode any hashed IDs in the update data
-                $updateData = $this->decodeHashedIds($arguments['data']);
-                $item->update($updateData);
-                
-                // Use transformer if available
-                $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
-                if (class_exists($transformerClass)) {
-                    $transformer = new $transformerClass();
-                    $transformedData = $transformer->transform($item);
-                } else {
-                    $transformedData = $item->toArray();
-                }
-                
-                return ['data' => $transformedData];
+                return $this->handleUpdateOperation($entity, $modelClass, $arguments);
                 
             case 'delete':
-                $this->debugLog("Executing delete operation", ['entity' => $entity]);
-                if (!isset($arguments['id'])) {
-                    throw new \Exception('ID is required for delete operation');
-                }
-                
-                // Decode the hashed ID to get the actual database ID
-                $model = new $modelClass();
-                $decodedId = $model->decodePrimaryKey($arguments['id']);
-                
-                if (!$decodedId) {
-                    throw new \Exception("Invalid ID: {$arguments['id']}");
-                }
-                
-                $item = $modelClass::findOrFail($decodedId);
-                
-                // Soft delete if supported, otherwise hard delete
-                if (method_exists($item, 'delete')) {
-                    $item->delete();
-                }
-                
-                return ['data' => ['message' => "{$entity} deleted successfully", 'id' => $arguments['id']]];
+                return $this->handleDeleteOperation($entity, $modelClass, $arguments);
                 
             default:
                 throw new \Exception("Unsupported action: {$action}");
         }
     }
 
+    private function handleListOperation(string $entity, string $modelClass, array $arguments): array
+    {
+        $this->debugLog("Executing list operation", ['entity' => $entity, 'arguments' => $arguments]);
+        
+        $perPage = $arguments['per_page'] ?? 20;
+        $page = $arguments['page'] ?? 1;
+        
+        // Always use direct query approach (filter classes require auth context)
+        // Build query with company scope
+        $company = \App\Models\Company::first();
+        $query = $modelClass::where('company_id', $company->id);
+            
+        
+        // Apply common filters if provided
+        if (isset($arguments['client_id'])) {
+            $decodedId = $this->decodeHashedId($arguments['client_id']);
+            if ($decodedId) {
+                $query->where('client_id', $decodedId);
+                $this->debugLog("Applied client_id filter", ['client_id' => $decodedId]);
+            }
+        }
+        if (isset($arguments['vendor_id'])) {
+            $decodedId = $this->decodeHashedId($arguments['vendor_id']);
+            if ($decodedId) {
+                $query->where('vendor_id', $decodedId);
+                $this->debugLog("Applied vendor_id filter", ['vendor_id' => $decodedId]);
+            }
+        }
+        if (isset($arguments['is_deleted'])) {
+            $isDeleted = $arguments['is_deleted'] === 'true' || $arguments['is_deleted'] === true;
+            $query->where('is_deleted', $isDeleted);
+            $this->debugLog("Applied is_deleted filter", ['is_deleted' => $isDeleted]);
+        }
+        if (isset($arguments['name'])) {
+            $query->where('name', 'like', '%' . $arguments['name'] . '%');
+            $this->debugLog("Applied name filter", ['name' => $arguments['name']]);
+        }
+        if (isset($arguments['status'])) {
+            // Handle status filter for invoices/quotes
+            $query->where('status_id', $arguments['status']);
+            $this->debugLog("Applied status filter", ['status' => $arguments['status']]);
+        }
+        if (isset($arguments['created_at'])) {
+            // Handle date range filter
+            $this->applyDateRangeFilter($query, 'created_at', $arguments['created_at']);
+            $this->debugLog("Applied created_at filter", ['created_at' => $arguments['created_at']]);
+        }
+        if (isset($arguments['updated_at'])) {
+            // Handle date range filter
+            $this->applyDateRangeFilter($query, 'updated_at', $arguments['updated_at']);
+            $this->debugLog("Applied updated_at filter", ['updated_at' => $arguments['updated_at']]);
+        }
+        
+        // Get paginated results
+        $results = $query->paginate($perPage, ['*'], 'page', $page);
+        $this->debugLog("Query executed", ['total' => $results->total(), 'page' => $page]);
+        
+        // Use transformer if available
+        $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
+        if (class_exists($transformerClass)) {
+            $transformer = new $transformerClass();
+            $data = $results->getCollection()->map(function ($item) use ($transformer) {
+                return $transformer->transform($item);
+            });
+        } else {
+            $data = $results->getCollection()->toArray();
+        }
+        
+        return [
+            'data' => $data,
+            'meta' => [
+                'pagination' => [
+                    'total' => $results->total(),
+                    'count' => $results->count(),
+                    'per_page' => $results->perPage(),
+                    'current_page' => $results->currentPage(),
+                    'total_pages' => $results->lastPage(),
+                ]
+            ]
+        ];
+    }
+
+    private function handleGetOperation(string $entity, string $modelClass, array $arguments): array
+    {
+        $this->debugLog("Executing get operation", ['entity' => $entity]);
+        
+        if (!isset($arguments['id'])) {
+            throw new \Exception('ID is required for get operation');
+        }
+        
+        // Decode the hashed ID to get the actual database ID
+        $model = new $modelClass();
+        $decodedId = $model->decodePrimaryKey($arguments['id']);
+        
+        if (!$decodedId) {
+            throw new \Exception("Invalid ID: {$arguments['id']}");
+        }
+        
+        $item = $modelClass::findOrFail($decodedId);
+        
+        // Use transformer if available
+        $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
+        if (class_exists($transformerClass)) {
+            $transformer = new $transformerClass();
+            $data = $transformer->transform($item);
+        } else {
+            $data = $item->toArray();
+        }
+        
+        return ['data' => $data];
+    }
+
+    private function handleCreateOperation(string $entity, string $modelClass, array $arguments): array
+    {
+        $this->debugLog("Executing create operation", ['entity' => $entity, 'data' => $arguments]);
+        
+        $data = $arguments['data'] ?? $arguments;
+        
+        // Get the first company and user for context
+        $company = \App\Models\Company::first();
+        $user = \App\Models\User::first();
+        
+        if (!$company || !$user) {
+            throw new \Exception('No company or user found in the system');
+        }
+        
+        $this->debugLog("Found company and user", ['company_id' => $company->id, 'user_id' => $user->id]);
+        
+        // Decode any hashed IDs in the data
+        $data = $this->decodeHashedIds($data);
+        
+        // Apply entity-specific defaults (like currency_id for expenses)
+        $data = $this->applyEntityDefaults($entity, $data, $company);
+        
+        $this->debugLog("Data after ID decoding and defaults", ['data' => $data]);
+        
+        // Get entity configuration
+        $config = $this->getEntityConfiguration($entity);
+        $this->debugLog("Entity configuration", ['entity' => $entity, 'config' => $config]);
+        
+        // Create using factory
+        $factoryClass = "\\App\\Factory\\{$entity}Factory";
+        if (!class_exists($factoryClass)) {
+            throw new \Exception("Factory not found: {$factoryClass}");
+        }
+        
+        $item = $factoryClass::create($company->id, $user->id);
+        $this->debugLog("Factory created item", ['item_id' => $item->id ?? 'no_id']);
+        
+        // Handle creation based on entity configuration
+        if ($config['use_repository']) {
+            // Use repository pattern with Laravel's IoC container
+            $repositoryClass = "\\App\\Repositories\\{$entity}Repository";
+            
+            if (!class_exists($repositoryClass)) {
+                throw new \Exception("Repository not found: {$repositoryClass}");
+            }
+            
+            try {
+                $this->debugLog("Using repository pattern with IoC container", ['repository' => $repositoryClass]);
+                
+                // Use Laravel's service container to resolve dependencies
+                $repository = app()->make($repositoryClass);
+                $item = $repository->save($data, $item);
+                
+                $this->debugLog("Repository save completed", ['item_id' => $item->id ?? 'no_id']);
+            } catch (\Exception $e) {
+                $this->debugLog("Repository save failed, falling back to direct save", [
+                    'error' => $e->getMessage(),
+                    'trace' => $e->getTraceAsString()
+                ]);
+                
+                // Fallback to direct model operations
+                $item->fill($data);
+                $item->saveQuietly();
+                $this->debugLog("Direct save completed", ['item_id' => $item->id ?? 'no_id']);
+            }
+        } else {
+            // Use direct model operations
+            $this->debugLog("Using direct model operations");
+            $item->fill($data);
+            $item->saveQuietly();
+            $this->debugLog("Direct save completed", ['item_id' => $item->id ?? 'no_id']);
+            
+            // Handle special cases
+            if ($entity === 'Project') {
+                // Always generate number if not provided or empty
+                if (empty($item->number) || $item->number === null || $item->number === '') {
+                    $item->number = $this->getNextProjectNumber($item);
+                    $item->saveQuietly();
+                    $this->debugLog("Project number generated", ['number' => $item->number]);
+                }
+            }
+        }
+        
+        // Apply service layer if configured
+        if ($config['use_service'] && method_exists($item, 'service')) {
+            try {
+                $this->debugLog("Applying service layer");
+                $service = $item->service();
+                
+                // Call fillDefaults if available
+                if (method_exists($service, 'fillDefaults')) {
+                    $this->debugLog("Calling fillDefaults");
+                    $service->fillDefaults();
+                }
+                
+                // Save through service
+                if (method_exists($service, 'save')) {
+                    $this->debugLog("Calling service save");
+                    $item = $service->save();
+                    $this->debugLog("Service save completed");
+                }
+            } catch (\Exception $e) {
+                $this->debugLog("Service layer processing failed, continuing", ['error' => $e->getMessage()]);
+                // Continue with the item as is
+            }
+        }
+        
+        // Trigger creation event
+        event('eloquent.created: App\\Models\\' . $entity, $item);
+        
+        // Refresh the item to get all relationships
+        $item = $item->fresh();
+        
+        // Use transformer if available
+        $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
+        if (class_exists($transformerClass)) {
+            $transformer = new $transformerClass();
+            $transformedData = $transformer->transform($item);
+        } else {
+            $transformedData = $item->toArray();
+        }
+        
+        $this->debugLog("Create operation completed", ['entity' => $entity, 'id' => $item->id ?? 'no_id']);
+        return ['data' => $transformedData];
+    }
+
+    private function handleUpdateOperation(string $entity, string $modelClass, array $arguments): array
+    {
+        $this->debugLog("Executing update operation", ['entity' => $entity]);
+        
+        if (!isset($arguments['id'])) {
+            throw new \Exception('ID is required for update operation');
+        }
+        
+        if (!isset($arguments['data'])) {
+            throw new \Exception('Data is required for update operation');
+        }
+        
+        // Decode the hashed ID
+        $model = new $modelClass();
+        $decodedId = $model->decodePrimaryKey($arguments['id']);
+        
+        if (!$decodedId) {
+            throw new \Exception("Invalid ID: {$arguments['id']}");
+        }
+        
+        $item = $modelClass::findOrFail($decodedId);
+        
+        // Decode any hashed IDs in the update data
+        $updateData = $this->decodeHashedIds($arguments['data']);
+        
+        // Get entity configuration
+        $config = $this->getEntityConfiguration($entity);
+        
+        if ($config['use_repository']) {
+            // Use repository for update
+            $repositoryClass = "\\App\\Repositories\\{$entity}Repository";
+            
+            if (class_exists($repositoryClass)) {
+                try {
+                    $this->debugLog("Using repository for update", ['repository' => $repositoryClass]);
+                    $repository = app()->make($repositoryClass);
+                    $item = $repository->save($updateData, $item);
+                    $this->debugLog("Repository update completed");
+                } catch (\Exception $e) {
+                    $this->debugLog("Repository update failed, using direct update", ['error' => $e->getMessage()]);
+                    $item->update($updateData);
+                }
+            } else {
+                $item->update($updateData);
+            }
+        } else {
+            // Direct update
+            $item->update($updateData);
+        }
+        
+        // Apply service layer if configured
+        if ($config['use_service'] && method_exists($item, 'service')) {
+            try {
+                $service = $item->service();
+                if (method_exists($service, 'save')) {
+                    $item = $service->save();
+                }
+            } catch (\Exception $e) {
+                $this->debugLog("Service layer update failed, continuing", ['error' => $e->getMessage()]);
+            }
+        }
+        
+        // Use transformer if available
+        $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
+        if (class_exists($transformerClass)) {
+            $transformer = new $transformerClass();
+            $transformedData = $transformer->transform($item);
+        } else {
+            $transformedData = $item->toArray();
+        }
+        
+        return ['data' => $transformedData];
+    }
+
+    private function handleDeleteOperation(string $entity, string $modelClass, array $arguments): array
+    {
+        $this->debugLog("Executing delete operation", ['entity' => $entity]);
+        
+        if (!isset($arguments['id'])) {
+            throw new \Exception('ID is required for delete operation');
+        }
+        
+        // Decode the hashed ID
+        $model = new $modelClass();
+        $decodedId = $model->decodePrimaryKey($arguments['id']);
+        
+        if (!$decodedId) {
+            throw new \Exception("Invalid ID: {$arguments['id']}");
+        }
+        
+        $item = $modelClass::findOrFail($decodedId);
+        
+        // Get entity configuration
+        $config = $this->getEntityConfiguration($entity);
+        
+        if ($config['use_repository']) {
+            // Some repositories have special delete methods
+            $repositoryClass = "\\App\\Repositories\\{$entity}Repository";
+            
+            if (class_exists($repositoryClass) && method_exists($repositoryClass, 'delete')) {
+                try {
+                    $repository = app()->make($repositoryClass);
+                    $repository->delete($item);
+                } catch (\Exception $e) {
+                    $this->debugLog("Repository delete failed, using direct delete", ['error' => $e->getMessage()]);
+                    $item->delete();
+                }
+            } else {
+                $item->delete();
+            }
+        } else {
+            // Direct delete
+            $item->delete();
+        }
+        
+        return ['data' => ['message' => "{$entity} deleted successfully", 'id' => $arguments['id']]];
+    }
+
+    /**
+     * Apply entity-specific defaults
+     */
+    private function applyEntityDefaults(string $entity, array $data, $company): array
+    {
+        switch ($entity) {
+            case 'Expense':
+                // Set default currency_id if not provided (required for exchange rate calculation)
+                if (!isset($data['currency_id']) || strlen($data['currency_id']) == 0) {
+                    $data['currency_id'] = (string) $company->settings->currency_id;
+                    $this->debugLog("Applied default currency_id for Expense", ['currency_id' => $data['currency_id']]);
+                }
+                break;
+                
+            case 'Invoice':
+            case 'Quote':
+            case 'Credit':
+                // Set default currency_id if not provided
+                if (!isset($data['currency_id']) || strlen($data['currency_id']) == 0) {
+                    $data['currency_id'] = (string) $company->settings->currency_id;
+                }
+                break;
+                
+            case 'Payment':
+                // Set default currency_id if not provided
+                if (!isset($data['currency_id']) || strlen($data['currency_id']) == 0) {
+                    $data['currency_id'] = (string) $company->settings->currency_id;
+                }
+                // Set default type_id if not provided
+                if (!isset($data['type_id'])) {
+                    $data['type_id'] = 1; // Manual payment
+                }
+                break;
+                
+            case 'Vendor':
+                // Validate or remove invalid country_id
+                if (isset($data['country_id'])) {
+                    // Check if the country_id exists
+                    $country = \App\Models\Country::find($data['country_id']);
+                    if (!$country) {
+                        // Use default country_id from factory or remove it
+                        unset($data['country_id']);
+                        $this->debugLog("Removed invalid country_id for Vendor");
+                    }
+                }
+                
+                // Validate or set default currency_id
+                if (isset($data['currency_id'])) {
+                    $currency = \App\Models\Currency::find($data['currency_id']);
+                    if (!$currency) {
+                        // Remove invalid currency_id, let the factory handle it
+                        unset($data['currency_id']);
+                        $this->debugLog("Removed invalid currency_id for Vendor");
+                    }
+                }
+                break;
+        }
+        
+        return $data;
+    }
+    
     /**
      * Get the next project number
-     * 
-     * @param \App\Models\Project $project
-     * @return string
      */
     private function getNextProjectNumber($project): string
     {
+        // Get counter and pattern from company settings
         $counter = $project->company->settings->project_number_counter ?? 1;
-        $pattern = $project->company->settings->project_number_pattern ?? '{$counter}';
+        $pattern = $project->company->settings->project_number_pattern ?? '';
         
-        // Simple counter replacement (can be extended for more complex patterns)
+        // If no pattern is set, use a simple counter format
+        if (empty($pattern)) {
+            $pattern = '{$counter}';
+        }
+        
+        // Replace the counter placeholder - the pattern uses {$counter} not as a PHP variable
         $number = str_replace('{$counter}', str_pad($counter, 4, '0', STR_PAD_LEFT), $pattern);
+        
+        // If the number is still empty or unchanged, use a fallback
+        if (empty($number) || $number === $pattern) {
+            $number = str_pad($counter, 4, '0', STR_PAD_LEFT);
+        }
         
         // Update the counter in company settings
         $settings = $project->company->settings;
@@ -540,14 +776,49 @@ class McpServerSdkCommand extends Command
         $project->company->settings = $settings;
         $project->company->save();
         
+        $this->debugLog("Generated project number", ['counter' => $counter, 'pattern' => $pattern, 'number' => $number]);
+        
         return $number;
     }
     
     /**
-     * Decode any hashed IDs in the data array (fields ending with _id)
-     * 
-     * @param array $data
-     * @return array
+     * Apply date range filter to query
+     */
+    private function applyDateRangeFilter($query, string $field, string $dateRange): void
+    {
+        // Parse date range format: "2025-01-01:2025-12-31" or ">2025-01-01" or "<2025-12-31"
+        if (strpos($dateRange, ':') !== false) {
+            // Range format
+            list($start, $end) = explode(':', $dateRange);
+            $query->whereBetween($field, [$start, $end]);
+        } elseif (strpos($dateRange, '>') === 0) {
+            // Greater than
+            $query->where($field, '>', substr($dateRange, 1));
+        } elseif (strpos($dateRange, '<') === 0) {
+            // Less than
+            $query->where($field, '<', substr($dateRange, 1));
+        } else {
+            // Exact date
+            $query->whereDate($field, $dateRange);
+        }
+    }
+    
+    /**
+     * Decode a single hashed ID
+     */
+    private function decodeHashedId(string $hashedId): ?int
+    {
+        try {
+            $tempModel = new \App\Models\Client();
+            $decodedId = $tempModel->decodePrimaryKey($hashedId);
+            return $decodedId ?: null;
+        } catch (\Exception $e) {
+            return null;
+        }
+    }
+    
+    /**
+     * Decode any hashed IDs in the data array
      */
     private function decodeHashedIds(array $data): array
     {
@@ -563,11 +834,9 @@ class McpServerSdkCommand extends Command
                         $this->debugLog("Decoded hashed ID", ['field' => $key, 'original' => $value, 'decoded' => $decodedId]);
                         $data[$key] = $decodedId;
                     }
-                    // If decoding fails, leave the original value (might be a numeric ID already)
                 } catch (\Exception $e) {
                     $this->debugLog("Failed to decode hashed ID", ['field' => $key, 'value' => $value, 'error' => $e->getMessage()]);
                     // If decoding fails, leave the original value
-                    continue;
                 }
             }
         }
