@@ -1,6 +1,6 @@
 <?php
 /**
- * MCP SDK HTTP Server Entry Point
+ * MCP SDK HTTP Server Entry Point with Bank Support
  * This file is served by PHP's built-in server for HTTP mode
  */
 
@@ -40,12 +40,15 @@ $logger->pushHandler($handler);
 // Create server instance
 $server = new Server('invoice-ninja-mcp-sdk', $logger);
 
-// Load the command class to reuse its logic
+// Load the updated command class with bank support
 $command = new \App\Console\Commands\McpServerSdkCommand();
 
 // Use reflection to access private methods
 $generateToolsMethod = new ReflectionMethod($command, 'generateTools');
 $generateToolsMethod->setAccessible(true);
+
+$generateBankToolsMethod = new ReflectionMethod($command, 'generateBankTools');
+$generateBankToolsMethod->setAccessible(true);
 
 $handleToolCallMethod = new ReflectionMethod($command, 'handleToolCall');
 $handleToolCallMethod->setAccessible(true);

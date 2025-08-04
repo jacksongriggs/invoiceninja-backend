@@ -89,7 +89,9 @@ class BankTransaction extends BaseModel
         'vendor_id',
         'amount',
         'participant',
-        'participant_name'
+        'participant_name',
+        'up_transaction_id',
+        'metadata'
     ];
 
 
