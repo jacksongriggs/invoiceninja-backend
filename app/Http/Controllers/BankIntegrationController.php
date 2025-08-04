@@ -224,6 +224,14 @@ class BankIntegrationController extends BaseController
             });
         }
 
+        // UP Bank integration support (available for self-hosted)
+        if (Ninja::isSelfHost() || (Ninja::isHosted() && $user_account->isEnterprisePaidClient())) {
+            $user_account->bank_integrations->where("integration_type", BankIntegration::INTEGRATION_TYPE_UPBANK)->each(function ($bank_integration) {
+                /** @var \App\Models\BankIntegration $bank_integration */
+                \App\Jobs\Bank\ProcessBankTransactionsUpBank::dispatch($bank_integration);
+            });
+        }
+
         Cache::put("throttle_polling:{$user_account->key}", true, 300);
 
         return response()->json(BankIntegration::query()->company(), 200);

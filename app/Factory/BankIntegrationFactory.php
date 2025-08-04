@@ -31,6 +31,7 @@ class BankIntegrationFactory
         $bank_integration->balance = 0;
         $bank_integration->currency = '';
         $bank_integration->auto_sync = true;
+        $bank_integration->nickname = '';  // Add default nickname
 
         return $bank_integration;
     }

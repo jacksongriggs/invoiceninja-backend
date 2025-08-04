@@ -75,11 +75,21 @@ class BankIntegration extends BaseModel
         'currency',
         'from_date',
         'auto_sync',
+        'up_account_id',
+        'up_account_type',
+        'up_access_token',
+        'webhook_id',
+        'integration_type',
+        'bank_account_id',
+        'disabled_upstream',
+        'nickname',
     ];
 
     public const INTEGRATION_TYPE_YODLEE = 'YODLEE';
 
     public const INTEGRATION_TYPE_NORDIGEN = 'NORDIGEN';
+
+    public const INTEGRATION_TYPE_UPBANK = 'UPBANK';
 
     public function getEntityType()
     {

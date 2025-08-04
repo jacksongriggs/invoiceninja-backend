@@ -269,4 +269,9 @@ return [
     'zugferd_version_two' => env('ZUGFERD_VERSION_TWO', true),
     'chart_service_url' => env('CHART_SERVICE_URL', false),
     'docuninja_api_url' => env('DOCUNINJA_API_URL', false),
+    'upbank' => [
+        'api_url' => env('UPBANK_API_URL', 'https://api.up.com.au/api/v1'),
+        'webhook_secret' => env('UPBANK_WEBHOOK_SECRET', null),
+        'test_mode' => env('UPBANK_TEST_MODE', false),
+    ],
 ];

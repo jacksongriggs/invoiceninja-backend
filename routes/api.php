@@ -73,6 +73,7 @@ use App\Http\Controllers\GroupSettingController;
 use App\Http\Controllers\OneTimeTokenController;
 use App\Http\Controllers\SubscriptionController;
 use App\Http\Controllers\Bank\NordigenController;
+use App\Http\Controllers\Bank\UpBankController;
 use App\Http\Controllers\CompanyLedgerController;
 use App\Http\Controllers\EInvoiceTokenController;
 use App\Http\Controllers\PurchaseOrderController;
@@ -473,6 +474,12 @@ Route::post('stripe/disconnect/{company_gateway_id}', [StripeController::class, 
     Route::post('yodlee/status/{account_number}', [YodleeController::class, 'accountStatus']); // @todo @turbo124 check route-path?!
 
     Route::get('nordigen/institutions', [NordigenController::class, 'institutions'])->name('nordigen.institutions');
+    
+    // UP Bank routes
+    Route::post('upbank/connect', [UpBankController::class, 'connect'])->name('upbank.connect');
+    Route::post('upbank/store', [UpBankController::class, 'storeAccount'])->name('upbank.store');
+    Route::delete('upbank/{id}/disconnect', [UpBankController::class, 'disconnect'])->name('upbank.disconnect');
+    Route::post('upbank/{id}/refresh', [UpBankController::class, 'refresh'])->name('upbank.refresh');
 
 });
 
@@ -506,6 +513,9 @@ Route::post('api/v1/yodlee/refresh', [YodleeController::class, 'refreshWebhook']
 Route::post('api/v1/yodlee/data_updates', [YodleeController::class, 'dataUpdatesWebhook'])->middleware('throttle:100,1');
 Route::post('api/v1/yodlee/refresh_updates', [YodleeController::class, 'refreshUpdatesWebhook'])->middleware('throttle:100,1');
 Route::post('api/v1/yodlee/balance', [YodleeController::class, 'balanceWebhook'])->middleware('throttle:100,1');
+
+// UP Bank webhook (no auth required)
+Route::post('api/v1/upbank/webhook/{integration_id}', [UpBankController::class, 'webhook'])->name('upbank.webhook')->middleware('throttle:100,1');
 
 Route::get('api/v1/protected_download/{hash}', [ProtectedDownloadController::class, 'index'])->name('protected_download')->middleware('throttle:300,1');
 Route::post('api/v1/ppcp/webhook', [PayPalPPCPPaymentDriver::class, 'processWebhookRequest'])->middleware('throttle:1000,1');

@@ -92,6 +92,8 @@ class BankTransaction extends BaseModel
         'participant',
         'participant_name',
         'currency_code',
+        'up_transaction_id',
+        'metadata'
     ];
 
 
