@@ -16,14 +16,22 @@ use Monolog\Handler\StreamHandler;
 
 class McpServerSdkCommand extends Command
 {
-    protected $signature = 'ninja:mcp-server-sdk {--stdio : Run in stdio mode for Claude Desktop}';
+    protected $signature = 'ninja:mcp-server-sdk 
+        {--stdio : Run in stdio mode for Claude Desktop}';
     protected $description = 'Start the MCP server using the official MCP SDK';
 
     public function handle()
     {
-        // Set up logging to stderr for stdio mode
+        // Set up logging based on mode
         $logger = new Logger('mcp-server-sdk');
-        $handler = new StreamHandler('php://stderr', Logger::INFO);
+        
+        if ($this->option('stdio')) {
+            // Log to stderr for stdio mode
+            $handler = new StreamHandler('php://stderr', Logger::INFO);
+        } else {
+            // Log to file for HTTP mode
+            $handler = new StreamHandler(storage_path('logs/mcp-server-sdk.log'), Logger::INFO);
+        }
         $logger->pushHandler($handler);
 
         // Create server instance
@@ -40,15 +48,15 @@ class McpServerSdkCommand extends Command
             return $this->handleToolCall($params->name, $params->arguments ?? []);
         });
 
-        if ($this->option('stdio')) {
-            // Run in stdio mode for Claude Desktop
-            $initOptions = $server->createInitializationOptions();
-            $runner = new ServerRunner($server, $initOptions, $logger);
-            $runner->run();
-        } else {
-            $this->error('HTTP mode not implemented yet. Use --stdio for now.');
+        if (!$this->option('stdio')) {
+            $this->error('Please specify --stdio mode. For HTTP mode, use the supervisor-managed server on port 8080.');
             return 1;
         }
+
+        // Run in stdio mode for Claude Desktop
+        $initOptions = $server->createInitializationOptions();
+        $runner = new ServerRunner($server, $initOptions, $logger);
+        $runner->run();
 
         return 0;
     }
