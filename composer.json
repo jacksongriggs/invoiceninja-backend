@@ -82,6 +82,7 @@
         "league/flysystem-aws-s3-v3": "^3.0",
         "league/fractal": "^0.20.0",
         "livewire/livewire": "^3",
+        "logiscape/mcp-sdk-php": "^1.2",
         "mailgun/mailgun-php": "^3.6",
         "microsoft/microsoft-graph": "^1.69",
         "mindee/mindee": "^1.8",
