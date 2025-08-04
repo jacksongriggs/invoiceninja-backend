@@ -58,8 +58,10 @@ class McpServerCommand extends Command
         require_once app_path('Services/McpServerNative.php');
         
         if ($isStdio) {
-            $this->info('Starting MCP server in stdio mode (for Claude Desktop)');
-            $this->info('Reading from stdin, writing to stdout...');
+            // Don't output anything to stdout in stdio mode as it interferes with JSON-RPC
+            // These messages go to stderr instead
+            fwrite(STDERR, "Starting MCP server in stdio mode (for Claude Desktop)\n");
+            fwrite(STDERR, "Reading from stdin, writing to stdout...\n");
             
             $server = new McpServerNative('stdio');
             $server->run();
