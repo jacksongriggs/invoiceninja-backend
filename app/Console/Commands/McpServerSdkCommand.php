@@ -284,6 +284,9 @@ class McpServerSdkCommand extends Command
                     throw new \Exception('No company or user found in the system');
                 }
                 
+                // Decode any hashed IDs in the data (fields ending with _id)
+                $data = $this->decodeHashedIds($data);
+                
                 // Use the appropriate Factory to create entity with required fields
                 $factoryClass = "\\App\\Factory\\{$entity}Factory";
                 if (class_exists($factoryClass) && method_exists($factoryClass, 'create')) {
@@ -329,7 +332,10 @@ class McpServerSdkCommand extends Command
                 }
                 
                 $item = $modelClass::findOrFail($decodedId);
-                $item->update($arguments['data']);
+                
+                // Decode any hashed IDs in the update data
+                $updateData = $this->decodeHashedIds($arguments['data']);
+                $item->update($updateData);
                 
                 // Use transformer if available
                 $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
@@ -367,5 +373,35 @@ class McpServerSdkCommand extends Command
             default:
                 throw new \Exception("Unsupported action: {$action}");
         }
+    }
+
+    /**
+     * Decode any hashed IDs in the data array (fields ending with _id)
+     * 
+     * @param array $data
+     * @return array
+     */
+    private function decodeHashedIds(array $data): array
+    {
+        foreach ($data as $key => $value) {
+            // Check if field ends with _id and value is a string (hashed ID)
+            if (str_ends_with($key, '_id') && is_string($value) && !empty($value)) {
+                try {
+                    // Try to decode the hashed ID
+                    $tempModel = new \App\Models\BaseModel();
+                    $decodedId = $tempModel->decodePrimaryKey($value);
+                    
+                    if ($decodedId) {
+                        $data[$key] = $decodedId;
+                    }
+                    // If decoding fails, leave the original value (might be a numeric ID already)
+                } catch (\Exception $e) {
+                    // If decoding fails, leave the original value
+                    continue;
+                }
+            }
+        }
+        
+        return $data;
     }
 }
