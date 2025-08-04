@@ -129,6 +129,44 @@ class McpServerSdkCommand extends Command
                     required: ['data']
                 )
             );
+
+            // Update tool
+            $updateProperties = ToolInputProperties::fromArray([
+                'id' => [
+                    'type' => 'string',
+                    'description' => "The {$singular} ID to update"
+                ],
+                'data' => [
+                    'type' => 'object',
+                    'description' => "{$singular} data to update"
+                ]
+            ]);
+
+            $tools[] = new Tool(
+                name: "update_{$singular}",
+                description: "Update an existing {$singular}",
+                inputSchema: new ToolInputSchema(
+                    properties: $updateProperties,
+                    required: ['id', 'data']
+                )
+            );
+
+            // Delete tool
+            $deleteProperties = ToolInputProperties::fromArray([
+                'id' => [
+                    'type' => 'string',
+                    'description' => "The {$singular} ID to delete"
+                ]
+            ]);
+
+            $tools[] = new Tool(
+                name: "delete_{$singular}",
+                description: "Delete a {$singular}",
+                inputSchema: new ToolInputSchema(
+                    properties: $deleteProperties,
+                    required: ['id']
+                )
+            );
         }
 
         return $tools;
@@ -246,6 +284,59 @@ class McpServerSdkCommand extends Command
                 }
                 
                 return ['data' => $transformedData];
+                
+            case 'update':
+                if (!isset($arguments['id'])) {
+                    throw new \Exception('ID is required for update operation');
+                }
+                
+                if (!isset($arguments['data'])) {
+                    throw new \Exception('Data is required for update operation');
+                }
+                
+                // Decode the hashed ID to get the actual database ID
+                $model = new $modelClass();
+                $decodedId = $model->decodePrimaryKey($arguments['id']);
+                
+                if (!$decodedId) {
+                    throw new \Exception("Invalid ID: {$arguments['id']}");
+                }
+                
+                $item = $modelClass::findOrFail($decodedId);
+                $item->update($arguments['data']);
+                
+                // Use transformer if available
+                $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
+                if (class_exists($transformerClass)) {
+                    $transformer = new $transformerClass();
+                    $transformedData = $transformer->transform($item);
+                } else {
+                    $transformedData = $item->toArray();
+                }
+                
+                return ['data' => $transformedData];
+                
+            case 'delete':
+                if (!isset($arguments['id'])) {
+                    throw new \Exception('ID is required for delete operation');
+                }
+                
+                // Decode the hashed ID to get the actual database ID
+                $model = new $modelClass();
+                $decodedId = $model->decodePrimaryKey($arguments['id']);
+                
+                if (!$decodedId) {
+                    throw new \Exception("Invalid ID: {$arguments['id']}");
+                }
+                
+                $item = $modelClass::findOrFail($decodedId);
+                
+                // Soft delete if supported, otherwise hard delete
+                if (method_exists($item, 'delete')) {
+                    $item->delete();
+                }
+                
+                return ['data' => ['message' => "{$entity} deleted successfully", 'id' => $arguments['id']]];
                 
             default:
                 throw new \Exception("Unsupported action: {$action}");
