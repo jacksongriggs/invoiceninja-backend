@@ -20,22 +20,30 @@ class McpServerSdkCommand extends Command
         {--stdio : Run in stdio mode for Claude Desktop}';
     protected $description = 'Start the MCP server using the official MCP SDK';
 
+    private $debugLogger;
+
     public function handle()
     {
         // Suppress PHP warnings that can interfere with JSON-RPC communication
         error_reporting(E_ERROR | E_PARSE);
         
-        // Set up logging based on mode
+        // Set up dual logging - both stderr and file
         $logger = new Logger('mcp-server-sdk');
         
+        // Always log to file for debugging
+        $fileHandler = new StreamHandler(storage_path('logs/mcp-server-debug.log'), Logger::DEBUG);
+        $logger->pushHandler($fileHandler);
+        
         if ($this->option('stdio')) {
-            // Log to stderr for stdio mode
-            $handler = new StreamHandler('php://stderr', Logger::INFO);
-        } else {
-            // Log to file for HTTP mode
-            $handler = new StreamHandler(storage_path('logs/mcp-server-sdk.log'), Logger::INFO);
+            // Also log to stderr for stdio mode (but only INFO and above to avoid noise)
+            $stderrHandler = new StreamHandler('php://stderr', Logger::INFO);
+            $logger->pushHandler($stderrHandler);
         }
-        $logger->pushHandler($handler);
+        
+        // Store logger for debugging
+        $this->debugLogger = $logger;
+        
+        $this->debugLog("MCP Server starting in " . ($this->option('stdio') ? 'stdio' : 'http') . " mode");
 
         // Create server instance
         $server = new Server('invoice-ninja-mcp-sdk', $logger);
@@ -62,6 +70,16 @@ class McpServerSdkCommand extends Command
         $runner->run();
 
         return 0;
+    }
+
+    private function debugLog(string $message, array $context = []): void
+    {
+        if ($this->debugLogger) {
+            $this->debugLogger->info($message, $context);
+        }
+        
+        // Also write to stderr for immediate visibility
+        fwrite(STDERR, "[MCP DEBUG] " . $message . (!empty($context) ? " " . json_encode($context) : "") . "\n");
     }
 
     private function generateTools(): array
@@ -177,11 +195,18 @@ class McpServerSdkCommand extends Command
 
     private function handleToolCall(string $toolName, array $arguments): CallToolResult
     {
+        $this->debugLog("handleToolCall called", ['tool' => $toolName, 'arguments' => $arguments]);
+        
         try {
+            // Set a timeout for operations
+            set_time_limit(30); // 30 second timeout
+            
             // Parse tool name to determine action and entity
             $parts = explode('_', $toolName);
             $action = $parts[0]; // list, get, create, update, delete
             $entity = implode('', array_map('ucfirst', array_slice($parts, 1)));
+            
+            $this->debugLog("Parsed tool call", ['action' => $action, 'entity' => $entity]);
             
             // Handle plural forms for list operations
             if ($action === 'list' && substr($entity, -1) === 's') {
@@ -189,6 +214,8 @@ class McpServerSdkCommand extends Command
             }
 
             $result = $this->callInternalApi($action, $entity, $arguments);
+            
+            $this->debugLog("Tool call completed successfully", ['tool' => $toolName]);
 
             return new CallToolResult(
                 content: [new TextContent(
@@ -197,17 +224,28 @@ class McpServerSdkCommand extends Command
             );
 
         } catch (\Exception $e) {
+            $this->debugLog("Tool call failed", [
+                'tool' => $toolName, 
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
             return new CallToolResult(
                 content: [new TextContent(
                     text: 'Error: ' . $e->getMessage()
                 )],
                 isError: true
             );
+        } finally {
+            // Reset timeout
+            set_time_limit(0);
         }
     }
 
     private function callInternalApi(string $action, string $entity, array $arguments): array
     {
+        $this->debugLog("callInternalApi called", ['action' => $action, 'entity' => $entity]);
+        
         // Use Laravel models directly
         $modelClass = "\\App\\Models\\{$entity}";
         
@@ -217,6 +255,7 @@ class McpServerSdkCommand extends Command
         
         switch ($action) {
             case 'list':
+                $this->debugLog("Executing list operation", ['entity' => $entity]);
                 $perPage = $arguments['per_page'] ?? 20;
                 $page = $arguments['page'] ?? 1;
                 
@@ -248,6 +287,7 @@ class McpServerSdkCommand extends Command
                 ];
                 
             case 'get':
+                $this->debugLog("Executing get operation", ['entity' => $entity]);
                 if (!isset($arguments['id'])) {
                     throw new \Exception('ID is required for get operation');
                 }
@@ -274,8 +314,9 @@ class McpServerSdkCommand extends Command
                 return ['data' => $data];
                 
             case 'create':
+                $this->debugLog("Executing create operation", ['entity' => $entity, 'data' => $arguments]);
+                
                 $data = $arguments['data'] ?? $arguments;
-                error_log("MCP: Create data before decoding: " . json_encode($data));
                 
                 // Get the first company and user for context
                 $company = \App\Models\Company::first();
@@ -285,28 +326,123 @@ class McpServerSdkCommand extends Command
                     throw new \Exception('No company or user found in the system');
                 }
                 
+                $this->debugLog("Found company and user", ['company_id' => $company->id, 'user_id' => $user->id]);
+                
                 // Decode any hashed IDs in the data (fields ending with _id)
                 $data = $this->decodeHashedIds($data);
                 
-                // Use the proper repository and service pattern like the API controllers
+                $this->debugLog("Data after ID decoding", ['data' => $data]);
+                
+                // Check for factory and repository classes
                 $factoryClass = "\\App\\Factory\\{$entity}Factory";
                 $repositoryClass = "\\App\\Repositories\\{$entity}Repository";
                 
-                if (class_exists($factoryClass) && method_exists($factoryClass, 'create') && class_exists($repositoryClass)) {
-                    // Create using factory and repository (proper Invoice Ninja pattern)
-                    $item = $factoryClass::create($company->id, $user->id);
-                    $repository = new $repositoryClass();
-                    $item = $repository->save($data, $item);
-                    
-                    // Apply service layer business logic if available
-                    if ($item && method_exists($item, 'service')) {
-                        $item = $item->service()->fillDefaults()->save();
+                $this->debugLog("Checking classes", [
+                    'factory' => $factoryClass,
+                    'repository' => $repositoryClass,
+                    'factory_exists' => class_exists($factoryClass),
+                    'repository_exists' => class_exists($repositoryClass)
+                ]);
+                
+                $item = null;
+                
+                // Check if we should use factory pattern (some entities like Project don't have repository save method)
+                if (class_exists($factoryClass) && method_exists($factoryClass, 'create')) {
+                    try {
+                        $this->debugLog("Using factory pattern for {$entity}");
+                        
+                        // Create using factory
+                        $item = $factoryClass::create($company->id, $user->id);
+                        $this->debugLog("Factory created item", ['item_id' => $item->id ?? 'no_id']);
+                        
+                        // Fill with data
+                        $item->fill($data);
+                        $this->debugLog("Item filled with data");
+                        
+                        // Save the item
+                        $item->saveQuietly();
+                        $this->debugLog("Item saved", ['item_id' => $item->id ?? 'no_id']);
+                        
+                        // Special handling for specific entity types
+                        switch ($entity) {
+                            case 'Project':
+                                // Projects need a number if not provided
+                                if (empty($item->number)) {
+                                    $item->number = $this->getNextProjectNumber($item);
+                                    $item->saveQuietly();
+                                    $this->debugLog("Project number generated", ['number' => $item->number]);
+                                }
+                                break;
+                                
+                            case 'Client':
+                            case 'Invoice':
+                            case 'Quote':
+                            case 'Payment':
+                                // These entities might have repository save methods
+                                if (class_exists($repositoryClass) && method_exists($repositoryClass, 'save')) {
+                                    $this->debugLog("Using repository save for {$entity}");
+                                    $repository = new $repositoryClass();
+                                    $item = $repository->save($data, $item);
+                                    $this->debugLog("Repository save completed");
+                                }
+                                break;
+                        }
+                        
+                        // Apply service layer if available (for entities that support it)
+                        if ($item && method_exists($item, 'service')) {
+                            $this->debugLog("Checking service layer for {$entity}");
+                            
+                            try {
+                                $service = $item->service();
+                                
+                                // Only call fillDefaults if it exists
+                                if (method_exists($service, 'fillDefaults')) {
+                                    $this->debugLog("Calling fillDefaults");
+                                    $service->fillDefaults();
+                                }
+                                
+                                // Save through service if available
+                                if (method_exists($service, 'save')) {
+                                    $this->debugLog("Calling service save");
+                                    $item = $service->save();
+                                    $this->debugLog("Service save completed");
+                                }
+                            } catch (\Exception $e) {
+                                $this->debugLog("Service layer processing failed, continuing with basic save", ['error' => $e->getMessage()]);
+                                // Continue with the item as saved
+                            }
+                        }
+                        
+                        // Trigger creation event
+                        event('eloquent.created: App\\Models\\' . $entity, $item);
+                        
+                        $this->debugLog("Entity creation completed successfully", ['entity' => $entity, 'id' => $item->id ?? 'no_id']);
+                        
+                    } catch (\Exception $e) {
+                        $this->debugLog("Factory creation failed", [
+                            'entity' => $entity,
+                            'error' => $e->getMessage(),
+                            'trace' => $e->getTraceAsString()
+                        ]);
+                        throw $e;
                     }
                 } else {
+                    $this->debugLog("Using simple model creation fallback");
                     // Fallback for entities without factories/repositories
                     $data['company_id'] = $company->id;
                     $data['user_id'] = $user->id;
-                    $item = $modelClass::create($data);
+                    
+                    try {
+                        $item = $modelClass::create($data);
+                        $this->debugLog("Simple model creation completed", ['item_id' => $item->id ?? 'no_id']);
+                    } catch (\Exception $e) {
+                        $this->debugLog("Simple model creation failed", ['error' => $e->getMessage()]);
+                        throw $e;
+                    }
+                }
+                
+                if (!$item) {
+                    throw new \Exception("Failed to create {$entity}");
                 }
                 
                 // Use transformer if available
@@ -318,9 +454,11 @@ class McpServerSdkCommand extends Command
                     $transformedData = $item->toArray();
                 }
                 
+                $this->debugLog("Create operation completed", ['entity' => $entity]);
                 return ['data' => $transformedData];
                 
             case 'update':
+                $this->debugLog("Executing update operation", ['entity' => $entity]);
                 if (!isset($arguments['id'])) {
                     throw new \Exception('ID is required for update operation');
                 }
@@ -355,6 +493,7 @@ class McpServerSdkCommand extends Command
                 return ['data' => $transformedData];
                 
             case 'delete':
+                $this->debugLog("Executing delete operation", ['entity' => $entity]);
                 if (!isset($arguments['id'])) {
                     throw new \Exception('ID is required for delete operation');
                 }
@@ -382,6 +521,29 @@ class McpServerSdkCommand extends Command
     }
 
     /**
+     * Get the next project number
+     * 
+     * @param \App\Models\Project $project
+     * @return string
+     */
+    private function getNextProjectNumber($project): string
+    {
+        $counter = $project->company->settings->project_number_counter ?? 1;
+        $pattern = $project->company->settings->project_number_pattern ?? '{$counter}';
+        
+        // Simple counter replacement (can be extended for more complex patterns)
+        $number = str_replace('{$counter}', str_pad($counter, 4, '0', STR_PAD_LEFT), $pattern);
+        
+        // Update the counter in company settings
+        $settings = $project->company->settings;
+        $settings->project_number_counter = $counter + 1;
+        $project->company->settings = $settings;
+        $project->company->save();
+        
+        return $number;
+    }
+    
+    /**
      * Decode any hashed IDs in the data array (fields ending with _id)
      * 
      * @param array $data
@@ -398,12 +560,12 @@ class McpServerSdkCommand extends Command
                     $decodedId = $tempModel->decodePrimaryKey($value);
                     
                     if ($decodedId) {
-                        error_log("MCP: Decoded {$key}: {$value} -> {$decodedId}");
+                        $this->debugLog("Decoded hashed ID", ['field' => $key, 'original' => $value, 'decoded' => $decodedId]);
                         $data[$key] = $decodedId;
                     }
                     // If decoding fails, leave the original value (might be a numeric ID already)
                 } catch (\Exception $e) {
-                    error_log("MCP: Failed to decode {$key}: {$value} - " . $e->getMessage());
+                    $this->debugLog("Failed to decode hashed ID", ['field' => $key, 'value' => $value, 'error' => $e->getMessage()]);
                     // If decoding fails, leave the original value
                     continue;
                 }
