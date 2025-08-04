@@ -64,4 +64,4 @@ EOF < /dev/null
 /public/*.jpg
 /public/font-files/
 /public/tinymce/
-EOF < /dev/null
+EOF < /dev/nullresources/views/react/head.blade.php
