@@ -22,6 +22,9 @@ class McpServerSdkCommand extends Command
 
     public function handle()
     {
+        // Suppress PHP warnings that can interfere with JSON-RPC communication
+        error_reporting(E_ERROR | E_PARSE);
+        
         // Set up logging based on mode
         $logger = new Logger('mcp-server-sdk');
         
@@ -117,7 +120,7 @@ class McpServerSdkCommand extends Command
             $createProperties = ToolInputProperties::fromArray([
                 'data' => [
                     'type' => 'object',
-                    'description' => "{$singular} data to create"
+                    'description' => "{$singular} data to create (company_id and user_id are added automatically)"
                 ]
             ]);
 
@@ -272,7 +275,30 @@ class McpServerSdkCommand extends Command
                 
             case 'create':
                 $data = $arguments['data'] ?? $arguments;
-                $item = $modelClass::create($data);
+                
+                // Get the first company and user for context
+                $company = \App\Models\Company::first();
+                $user = \App\Models\User::first();
+                
+                if (!$company || !$user) {
+                    throw new \Exception('No company or user found in the system');
+                }
+                
+                // Use the appropriate Factory to create entity with required fields
+                $factoryClass = "\\App\\Factory\\{$entity}Factory";
+                if (class_exists($factoryClass) && method_exists($factoryClass, 'create')) {
+                    // Create using factory to get all required fields set
+                    $item = $factoryClass::create($company->id, $user->id);
+                    
+                    // Then update with the provided data
+                    $item->fill($data);
+                    $item->save();
+                } else {
+                    // Fallback for entities without factories
+                    $data['company_id'] = $company->id;
+                    $data['user_id'] = $user->id;
+                    $item = $modelClass::create($data);
+                }
                 
                 // Use transformer if available
                 $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
