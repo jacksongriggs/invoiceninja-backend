@@ -211,7 +211,15 @@ class McpServerSdkCommand extends Command
                     throw new \Exception('ID is required for get operation');
                 }
                 
-                $item = $modelClass::findOrFail($arguments['id']);
+                // Decode the hashed ID to get the actual database ID
+                $model = new $modelClass();
+                $decodedId = $model->decodePrimaryKey($arguments['id']);
+                
+                if (!$decodedId) {
+                    throw new \Exception("Invalid ID: {$arguments['id']}");
+                }
+                
+                $item = $modelClass::findOrFail($decodedId);
                 
                 // Use transformer if available
                 $transformerClass = "\\App\\Transformers\\{$entity}Transformer";
