@@ -41,6 +41,7 @@ class BankTransactionTransformer extends EntityTransformer
         'payment',
         'vendor',
         'bank_account',
+        'linked_transaction',
     ];
 
     /**
@@ -72,6 +73,9 @@ class BankTransactionTransformer extends EntityTransformer
             'payment_id' => (string) $this->encodePrimaryKey($bank_transaction->payment_id) ?: '',
             'vendor_id' => (string) $this->encodePrimaryKey($bank_transaction->vendor_id) ?: '',
             'bank_transaction_rule_id' => (string) $this->encodePrimaryKey($bank_transaction->bank_transaction_rule_id) ?: '',
+            'linked_transaction_id' => $bank_transaction->linked_transaction_id ? $this->encodePrimaryKey($bank_transaction->linked_transaction_id) : '',
+            'is_linked' => $bank_transaction->isLinked(),
+            'status' => $bank_transaction->status_id === BankTransaction::STATUS_LINKED ? 'linked' : $this->getStatusName($bank_transaction->status_id),
             'is_deleted' => (bool) $bank_transaction->is_deleted,
             'nordigen_transaction_id' => (string) $bank_transaction->nordigen_transaction_id,
             'created_at' => (int) $bank_transaction->created_at,
@@ -106,5 +110,28 @@ class BankTransactionTransformer extends EntityTransformer
         $transformer = new PaymentTransformer($this->serializer);
 
         return $this->includeItem($bank_transaction->payment, $transformer, Payment::class);
+    }
+
+    public function includeLinkedTransaction(BankTransaction $bank_transaction)
+    {
+        $transformer = new BankTransactionTransformer($this->serializer);
+        
+        if ($bank_transaction->linkedTransaction) {
+            return $this->includeItem($bank_transaction->linkedTransaction, $transformer, BankTransaction::class);
+        }
+        
+        return null;
+    }
+
+    // Add helper method if not exists
+    private function getStatusName($status_id)
+    {
+        return match($status_id) {
+            BankTransaction::STATUS_UNMATCHED => 'unmatched',
+            BankTransaction::STATUS_MATCHED => 'matched',
+            BankTransaction::STATUS_CONVERTED => 'converted',
+            BankTransaction::STATUS_LINKED => 'linked',
+            default => 'unknown'
+        };
     }
 }

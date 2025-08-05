@@ -5932,6 +5932,16 @@ $lang = array(
     'sync_started' => 'Sync has started',
     'quickbooks_read_only_data' => 'QuickBooks Income Accounts and Stored Tax Rates',
     'hide_peppol_sent_status' => 'Hide Peppol Sent Status',
+    'link_transaction' => 'Link Transaction',
+    'unlink_transaction' => 'Unlink Transaction',
+    'linked_transaction' => 'Linked Transaction',
+    'linked_transactions' => 'Successfully linked :count transactions',
+    'transaction_already_linked' => 'This transaction is already linked',
+    'cannot_link_to_self' => 'Cannot link a transaction to itself',
+    'transactions_linked' => 'Transactions linked successfully',
+    'transactions_unlinked' => 'Transactions unlinked successfully',
+    'bank_transaction_linked' => 'Bank transaction linked',
+    'bank_transaction_unlinked' => 'Bank transaction unlinked',
 );
 
 return $lang;

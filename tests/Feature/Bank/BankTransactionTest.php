@@ -538,4 +538,127 @@ class BankTransactionTest extends TestCase
 
         $response->assertStatus(200);
     }
+
+    public function testLinkBankTransactions()
+    {
+        $bi = BankIntegrationFactory::create($this->company->id, $this->user->id, $this->account->id);
+        $bi->save();
+        
+        // Create two bank transactions
+        $bt1 = BankTransactionFactory::create($this->company->id, $this->user->id);
+        $bt1->bank_integration_id = $bi->id;
+        $bt1->status_id = BankTransaction::STATUS_UNMATCHED;
+        $bt1->amount = 100;
+        $bt1->date = now()->format('Y-m-d');
+        $bt1->save();
+        
+        $bt2 = BankTransactionFactory::create($this->company->id, $this->user->id);
+        $bt2->bank_integration_id = $bi->id;
+        $bt2->status_id = BankTransaction::STATUS_UNMATCHED;
+        $bt2->amount = -100;
+        $bt2->date = now()->format('Y-m-d');
+        $bt2->save();
+        
+        // Test linking via API
+        $response = $this->withHeaders([
+            'X-API-SECRET' => config('ninja.api_secret'),
+            'X-API-TOKEN' => $this->token,
+        ])->postJson("/api/v1/bank_transactions/{$bt1->hashed_id}/link", [
+            'target_transaction_id' => $bt2->hashed_id
+        ]);
+        
+        $response->assertStatus(200);
+        
+        // Verify both transactions are linked
+        $this->assertEquals($bt2->id, $bt1->fresh()->linked_transaction_id);
+        $this->assertEquals($bt1->id, $bt2->fresh()->linked_transaction_id);
+        $this->assertEquals(BankTransaction::STATUS_LINKED, $bt1->fresh()->status_id);
+        $this->assertEquals(BankTransaction::STATUS_LINKED, $bt2->fresh()->status_id);
+    }
+
+    public function testUnlinkBankTransaction()
+    {
+        $bi = BankIntegrationFactory::create($this->company->id, $this->user->id, $this->account->id);
+        $bi->save();
+        
+        // Create linked transactions
+        $bt1 = BankTransactionFactory::create($this->company->id, $this->user->id);
+        $bt1->bank_integration_id = $bi->id;
+        $bt1->amount = 100;
+        $bt1->save();
+        
+        $bt2 = BankTransactionFactory::create($this->company->id, $this->user->id);
+        $bt2->bank_integration_id = $bi->id;
+        $bt2->amount = -100;
+        $bt2->save();
+        
+        // Link them
+        $bt1->linkToTransaction($bt2->id);
+        
+        // Test unlinking
+        $response = $this->withHeaders([
+            'X-API-SECRET' => config('ninja.api_secret'),
+            'X-API-TOKEN' => $this->token,
+        ])->postJson("/api/v1/bank_transactions/{$bt1->hashed_id}/unlink");
+        
+        $response->assertStatus(200);
+        
+        // Verify both are unlinked
+        $this->assertNull($bt1->fresh()->linked_transaction_id);
+        $this->assertNull($bt2->fresh()->linked_transaction_id);
+        $this->assertEquals(BankTransaction::STATUS_UNMATCHED, $bt1->fresh()->status_id);
+        $this->assertEquals(BankTransaction::STATUS_UNMATCHED, $bt2->fresh()->status_id);
+    }
+
+    public function testCannotLinkAlreadyLinkedTransaction()
+    {
+        $bi = BankIntegrationFactory::create($this->company->id, $this->user->id, $this->account->id);
+        $bi->save();
+        
+        // Create three transactions
+        $bt1 = BankTransactionFactory::create($this->company->id, $this->user->id);
+        $bt1->bank_integration_id = $bi->id;
+        $bt1->save();
+        
+        $bt2 = BankTransactionFactory::create($this->company->id, $this->user->id);
+        $bt2->bank_integration_id = $bi->id;
+        $bt2->save();
+        
+        $bt3 = BankTransactionFactory::create($this->company->id, $this->user->id);
+        $bt3->bank_integration_id = $bi->id;
+        $bt3->save();
+        
+        // Link first two
+        $bt1->linkToTransaction($bt2->id);
+        
+        // Try to link third to first (should fail)
+        $response = $this->withHeaders([
+            'X-API-SECRET' => config('ninja.api_secret'),
+            'X-API-TOKEN' => $this->token,
+        ])->postJson("/api/v1/bank_transactions/{$bt3->hashed_id}/link", [
+            'target_transaction_id' => $bt1->hashed_id
+        ]);
+        
+        $response->assertStatus(422);
+    }
+
+    public function testCannotLinkToSelf()
+    {
+        $bi = BankIntegrationFactory::create($this->company->id, $this->user->id, $this->account->id);
+        $bi->save();
+        
+        $bt = BankTransactionFactory::create($this->company->id, $this->user->id);
+        $bt->bank_integration_id = $bi->id;
+        $bt->save();
+        
+        $response = $this->withHeaders([
+            'X-API-SECRET' => config('ninja.api_secret'),
+            'X-API-TOKEN' => $this->token,
+        ])->postJson("/api/v1/bank_transactions/{$bt->hashed_id}/link", [
+            'target_transaction_id' => $bt->hashed_id
+        ]);
+        
+        $response->assertStatus(422);
+    }
+
 }

@@ -314,6 +314,11 @@ class Activity extends StaticModel
 
     public const PURGE_USER = 166;
 
+    public const LINK_BANK_TRANSACTION = 167;
+
+    public const UNLINK_BANK_TRANSACTION = 168;
+
+
     protected $casts = [
         'is_system' => 'boolean',
         'updated_at' => 'timestamp',

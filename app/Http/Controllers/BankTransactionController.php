@@ -18,9 +18,11 @@ use App\Http\Requests\BankTransaction\BulkBankTransactionRequest;
 use App\Http\Requests\BankTransaction\CreateBankTransactionRequest;
 use App\Http\Requests\BankTransaction\DestroyBankTransactionRequest;
 use App\Http\Requests\BankTransaction\EditBankTransactionRequest;
+use App\Http\Requests\BankTransaction\LinkBankTransactionRequest;
 use App\Http\Requests\BankTransaction\MatchBankTransactionRequest;
 use App\Http\Requests\BankTransaction\ShowBankTransactionRequest;
 use App\Http\Requests\BankTransaction\StoreBankTransactionRequest;
+use App\Http\Requests\BankTransaction\UnlinkBankTransactionRequest;
 use App\Http\Requests\BankTransaction\UpdateBankTransactionRequest;
 use App\Jobs\Bank\MatchBankTransactions;
 use App\Models\BankTransaction;
@@ -130,5 +132,23 @@ class BankTransactionController extends BaseController
         $bts = (new MatchBankTransactions($user->company()->id, $user->company()->db, $request->all()))->handle();
 
         return $this->listResponse($bts);
+    }
+
+    public function link(LinkBankTransactionRequest $request, BankTransaction $bank_transaction)
+    {
+        $target_id = $this->decodePrimaryKey($request->input('target_transaction_id'));
+        
+        if ($this->bank_transaction_repo->linkTransactions($bank_transaction->id, $target_id)) {
+            return $this->itemResponse($bank_transaction->fresh());
+        }
+        
+        return response()->json(['message' => 'Unable to link transactions'], 422);
+    }
+
+    public function unlink(UnlinkBankTransactionRequest $request, BankTransaction $bank_transaction)
+    {
+        $this->bank_transaction_repo->unlinkTransaction($bank_transaction->id);
+        
+        return $this->itemResponse($bank_transaction->fresh());
     }
 }

@@ -158,6 +158,8 @@ Route::group(['middleware' => ['throttle:api', 'token_auth', 'valid_json','local
     Route::resource('bank_transactions', BankTransactionController::class); // name = (bank_transactions. index / create / show / update / destroy / edit
     Route::post('bank_transactions/bulk', [BankTransactionController::class, 'bulk'])->name('bank_transactions.bulk');
     Route::post('bank_transactions/match', [BankTransactionController::class, 'match'])->name('bank_transactions.match');
+    Route::post('bank_transactions/{bank_transaction}/link', [BankTransactionController::class, 'link'])->name('bank_transactions.link');
+    Route::post('bank_transactions/{bank_transaction}/unlink', [BankTransactionController::class, 'unlink'])->name('bank_transactions.unlink');
 
     Route::resource('bank_transaction_rules', BankTransactionRuleController::class); // name = (clients. index / create / show / update / destroy / edit
     Route::post('bank_transaction_rules/bulk', [BankTransactionRuleController::class, 'bulk'])->name('bank_transaction_rules.bulk');

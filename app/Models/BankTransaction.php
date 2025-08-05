@@ -79,6 +79,8 @@ class BankTransaction extends BaseModel
 
     public const STATUS_CONVERTED = 3;
 
+    public const STATUS_LINKED = 4;
+
     protected $fillable = [
         'currency_id',
         'category_id',
@@ -93,7 +95,8 @@ class BankTransaction extends BaseModel
         'participant_name',
         'currency_code',
         'up_transaction_id',
-        'metadata'
+        'metadata',
+        'linked_transaction_id'
     ];
 
 
@@ -179,5 +182,65 @@ class BankTransaction extends BaseModel
     public function getExpenses()
     {
         return Expense::whereIn('id', $this->getExpenseIds())->get();
+    }
+
+    public function linkedTransaction()
+    {
+        return $this->belongsTo(BankTransaction::class, 'linked_transaction_id')->withTrashed();
+    }
+
+    public function linkedFrom()
+    {
+        return $this->hasOne(BankTransaction::class, 'linked_transaction_id');
+    }
+
+    public function linkToTransaction($transaction_id)
+    {
+        // Validate transaction exists and belongs to same company
+        $target = BankTransaction::where('id', $transaction_id)
+            ->where('company_id', $this->company_id)
+            ->first();
+            
+        if (!$target) {
+            return false;
+        }
+        
+        // Create bidirectional link with status update
+        $this->linked_transaction_id = $transaction_id;
+        $this->status_id = self::STATUS_LINKED;
+        $this->saveQuietly();
+        
+        $target->linked_transaction_id = $this->id;
+        $target->status_id = self::STATUS_LINKED;
+        $target->saveQuietly();
+        
+        return true;
+    }
+
+    public function unlink()
+    {
+        if ($this->linked_transaction_id) {
+            $linked = $this->linkedTransaction;
+            
+            if ($linked) {
+                $linked->linked_transaction_id = null;
+                $linked->status_id = self::STATUS_UNMATCHED;
+                $linked->saveQuietly();
+            }
+            
+            $this->linked_transaction_id = null;
+            $this->status_id = self::STATUS_UNMATCHED;
+            $this->saveQuietly();
+        }
+    }
+
+    public function isLinked()
+    {
+        return !is_null($this->linked_transaction_id);
+    }
+
+    public function getCounterpartTransaction()
+    {
+        return $this->linkedTransaction;
     }
 }
