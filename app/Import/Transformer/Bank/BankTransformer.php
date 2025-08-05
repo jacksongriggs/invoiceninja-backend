@@ -54,19 +54,36 @@ class BankTransformer extends BaseTransformer
 
     private function calculateAmount(array $transaction): float
     {
+        // Debug logging
+        \Log::info('BankTransformer calculateAmount', [
+            'transaction_keys' => array_keys($transaction),
+            'has_amount' => isset($transaction['transaction.amount']),
+            'has_credit' => isset($transaction['transaction.payment_type_Credit']),
+            'has_debit' => isset($transaction['transaction.payment_type_Debit']),
+            'amount_value' => $transaction['transaction.amount'] ?? 'not set',
+            'credit_value' => $transaction['transaction.payment_type_Credit'] ?? 'not set',
+            'debit_value' => $transaction['transaction.payment_type_Debit'] ?? 'not set',
+        ]);
 
-        if (isset($transaction['transaction.amount'])) {
-            return abs($this->getFloat($transaction, 'transaction.amount'));
+        if (isset($transaction['transaction.amount']) && strlen($transaction['transaction.amount']) > 0) {
+            $amount = abs($this->getFloat($transaction, 'transaction.amount'));
+            \Log::info('Using transaction.amount', ['original' => $transaction['transaction.amount'], 'calculated' => $amount]);
+            return $amount;
         }
 
-        if (isset($transaction['transaction.payment_type_Credit'])) {
-            return abs($this->getFloat($transaction, 'transaction.payment_type_Credit'));
+        if (isset($transaction['transaction.payment_type_Credit']) && strlen($transaction['transaction.payment_type_Credit']) > 0) {
+            $amount = abs($this->getFloat($transaction, 'transaction.payment_type_Credit'));
+            \Log::info('Using payment_type_Credit', ['original' => $transaction['transaction.payment_type_Credit'], 'calculated' => $amount]);
+            return $amount;
         }
 
-        if (isset($transaction['transaction.payment_type_Debit'])) {
-            return abs($this->getFloat($transaction, 'transaction.payment_type_Debit'));
+        if (isset($transaction['transaction.payment_type_Debit']) && strlen($transaction['transaction.payment_type_Debit']) > 0) {
+            $amount = abs($this->getFloat($transaction, 'transaction.payment_type_Debit'));
+            \Log::info('Using payment_type_Debit', ['original' => $transaction['transaction.payment_type_Debit'], 'calculated' => $amount]);
+            return $amount;
         }
 
+        \Log::warning('No amount found, returning 0');
         return 0;
     }
 
@@ -77,7 +94,7 @@ class BankTransformer extends BaseTransformer
             return 'CREDIT';
         }
 
-        if (array_key_exists('transaction.transaction.payment_type_Debit', $transaction) && is_numeric($transaction['transaction.payment_type_Debit'])) {
+        if (array_key_exists('transaction.payment_type_Debit', $transaction) && is_numeric($transaction['transaction.payment_type_Debit'])) {
             return 'DEBIT';
         }
 

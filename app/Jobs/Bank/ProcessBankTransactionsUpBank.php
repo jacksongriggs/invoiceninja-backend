@@ -154,6 +154,13 @@ class ProcessBankTransactionsUpBank implements ShouldQueue
             $processedCount = 0;
             $skippedCount = 0;
             
+            // Unguard the model to perform batch inserts (like Yodlee and Nordigen)
+            BankTransaction::unguard();
+            
+            $now = now();
+            $user_id = $this->bankIntegration->user_id;
+            $company_id = $this->bankIntegration->company_id;
+            
             foreach ($transactions as $transaction) {
                 // Check if transaction already exists
                 $existingTransaction = BankTransaction::where('bank_integration_id', $this->bankIntegration->id)
@@ -161,7 +168,8 @@ class ProcessBankTransactionsUpBank implements ShouldQueue
                         $query->where('transaction_id', $transaction['id'])
                               ->orWhere('up_transaction_id', $transaction['id']);
                     })
-                    ->first();
+                    ->withTrashed()
+                    ->exists();
                     
                 if ($existingTransaction) {
                     $skippedCount++;
@@ -171,10 +179,22 @@ class ProcessBankTransactionsUpBank implements ShouldQueue
                 // Transform and create new transaction
                 $transformedTransaction = $transformer->transform($transaction, $this->bankIntegration->id);
                 
-                // Create BankTransaction record
-                $bankTransaction = new BankTransaction();
-                $bankTransaction->fill($transformedTransaction);
-                $bankTransaction->save();
+                // Debug logging
+                $finalData = array_merge($transformedTransaction, [
+                    'company_id' => $company_id,
+                    'user_id' => $user_id,
+                    'created_at' => $now,
+                    'updated_at' => $now,
+                ]);
+                
+                Log::info('UP Bank transaction final data for insert', [
+                    'final_data' => $finalData,
+                    'has_status_id' => isset($finalData['status_id']),
+                    'status_id_value' => $finalData['status_id'] ?? 'not set',
+                ]);
+                
+                // Insert using direct database query like other bank integrations
+                \DB::table('bank_transactions')->insert($finalData);
                 
                 $processedCount++;
                 

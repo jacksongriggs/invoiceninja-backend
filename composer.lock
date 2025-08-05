@@ -4521,7 +4521,7 @@
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/invoiceninja/einvoice/zipball/531b7cb6b2d3885381378280a44fcf24d4ae7b58",
+                "url": "https://api.github.com/repos/backend/einvoice/zipball/531b7cb6b2d3885381378280a44fcf24d4ae7b58",
                 "reference": "531b7cb6b2d3885381378280a44fcf24d4ae7b58",
                 "shasum": ""
             },

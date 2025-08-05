@@ -29,18 +29,12 @@ class TransactionTransformer
             'transaction_id' => $transaction['id'],
             'up_transaction_id' => $transaction['id'],
             'amount' => $this->parseAmount($attributes['amount'] ?? []),
-            'currency_code' => $this->parseCurrency($attributes['amount'] ?? []),
-            'account_type' => 'bank',
-            'category_id' => null, // Will be mapped later
-            'category_type' => $this->parseCategory($relationships),
+            'currency_id' => $this->parseCurrencyId($attributes['amount'] ?? []),
+            'category_id' => null,
+            'category_type' => '',
             'base_type' => $this->parseBaseType($attributes),
             'date' => $this->parseDate($attributes['createdAt'] ?? null),
-            'bank_account_id' => $this->parseAccountId($relationships),
             'description' => $this->parseDescription($attributes),
-            'status_id' => $this->parseStatus($attributes['status'] ?? ''),
-            'invoice_ids' => '',
-            'ninja_category_id' => null,
-            'vendor_id' => null,
         ];
     }
     
@@ -50,15 +44,28 @@ class TransactionTransformer
     protected function parseAmount(array $amount): float
     {
         $valueInBaseUnits = $amount['valueInBaseUnits'] ?? 0;
-        return $valueInBaseUnits / 100; // UP Bank stores in cents
+        $amountValue = $valueInBaseUnits / 100; // UP Bank stores in cents
+        
+        // For debits (money going out), store as positive amount
+        // This makes it easier to convert to expenses later
+        return abs($amountValue);
     }
     
     /**
-     * Parse currency code
+     * Parse currency to currency ID
      */
-    protected function parseCurrency(array $amount): string
+    protected function parseCurrencyId(array $amount): ?int
     {
-        return $amount['currencyCode'] ?? 'AUD';
+        $code = $amount['currencyCode'] ?? 'AUD';
+        $currencies = app('currencies');
+        
+        foreach ($currencies as $currency) {
+            if ($currency->code == $code) {
+                return $currency->id;
+            }
+        }
+        
+        return 12; // Default to AUD
     }
     
     /**
@@ -153,19 +160,6 @@ class TransactionTransformer
         return implode(' | ', $parts);
     }
     
-    /**
-     * Parse transaction status to numeric ID
-     */
-    protected function parseStatus(string $status): int
-    {
-        // Map UP Bank status to numeric IDs
-        $statusMap = [
-            'HELD' => 1,
-            'SETTLED' => 2,
-        ];
-        
-        return $statusMap[$status] ?? 1; // Default to HELD
-    }
     
     /**
      * Get categories for a transaction (for matching)
