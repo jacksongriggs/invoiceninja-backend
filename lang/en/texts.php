@@ -5513,6 +5513,16 @@ $lang = array(
     'add_location' => 'Add Location',
     'updated_location' => 'Updated Location',
     'created_location' => 'Created Location',
+    'link_transaction' => 'Link Transaction',
+    'unlink_transaction' => 'Unlink Transaction',
+    'linked_transaction' => 'Linked Transaction',
+    'linked_transactions' => 'Successfully linked :count transactions',
+    'transaction_already_linked' => 'This transaction is already linked',
+    'cannot_link_to_self' => 'Cannot link a transaction to itself',
+    'transactions_linked' => 'Transactions linked successfully',
+    'transactions_unlinked' => 'Transactions unlinked successfully',
+    'bank_transaction_linked' => 'Bank transaction linked',
+    'bank_transaction_unlinked' => 'Bank transaction unlinked',
 );
 
 return $lang;

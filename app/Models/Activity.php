@@ -278,6 +278,10 @@ class Activity extends StaticModel
     public const E_EXPENSE_CREATED = 148;
 
     public const EMAIL_CREDIT = 149;
+
+    public const LINK_BANK_TRANSACTION = 150;
+
+    public const UNLINK_BANK_TRANSACTION = 151;
     
     protected $casts = [
         'is_system' => 'boolean',

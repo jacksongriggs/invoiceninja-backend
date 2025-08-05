@@ -286,6 +286,59 @@ class McpServerSdkCommand extends Command
             )
         );
 
+        // Add bank transaction linking tools
+        $linkProperties = ToolInputProperties::fromArray([
+            'source_transaction_id' => [
+                'type' => 'string',
+                'description' => 'The source bank transaction ID'
+            ],
+            'target_transaction_id' => [
+                'type' => 'string',
+                'description' => 'The target bank transaction ID to link to'
+            ]
+        ]);
+
+        $tools[] = new Tool(
+            name: 'link_bank_transactions',
+            description: 'Link two bank transactions together (for transfers)',
+            inputSchema: new ToolInputSchema(
+                properties: $linkProperties,
+                required: ['source_transaction_id', 'target_transaction_id']
+            )
+        );
+
+        $unlinkProperties = ToolInputProperties::fromArray([
+            'transaction_id' => [
+                'type' => 'string',
+                'description' => 'The bank transaction ID to unlink'
+            ]
+        ]);
+
+        $tools[] = new Tool(
+            name: 'unlink_bank_transaction',
+            description: 'Unlink a bank transaction from its linked transaction',
+            inputSchema: new ToolInputSchema(
+                properties: $unlinkProperties,
+                required: ['transaction_id']
+            )
+        );
+
+        $autoDetectProperties = ToolInputProperties::fromArray([
+            'days' => [
+                'type' => 'integer',
+                'description' => 'Number of days to look back (default: 7)'
+            ]
+        ]);
+
+        $tools[] = new Tool(
+            name: 'auto_detect_transfers',
+            description: 'Automatically detect and link transfer transactions',
+            inputSchema: new ToolInputSchema(
+                properties: $autoDetectProperties,
+                required: []
+            )
+        );
+
         return $tools;
     }
 
@@ -300,6 +353,19 @@ class McpServerSdkCommand extends Command
             // Handle special bank transaction conversion tool
             if ($toolName === 'convert_bank_transaction') {
                 return $this->handleBankTransactionConversion($arguments);
+            }
+            
+            // Handle bank transaction linking tools
+            if ($toolName === 'link_bank_transactions') {
+                return $this->linkBankTransactions($arguments);
+            }
+            
+            if ($toolName === 'unlink_bank_transaction') {
+                return $this->unlinkBankTransaction($arguments);
+            }
+            
+            if ($toolName === 'auto_detect_transfers') {
+                return $this->autoDetectTransfers($arguments);
             }
             
             // Parse tool name to determine action and entity
@@ -1059,6 +1125,136 @@ class McpServerSdkCommand extends Command
             
         } catch (\Exception $e) {
             $this->debugLog("Bank transaction conversion failed", [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return new CallToolResult(
+                content: [new TextContent(
+                    text: 'Error: ' . $e->getMessage()
+                )],
+                isError: true
+            );
+        }
+    }
+
+    private function linkBankTransactions(array $arguments): CallToolResult
+    {
+        $this->debugLog("linkBankTransactions called", ['arguments' => $arguments]);
+        
+        try {
+            $source_id = $this->decodePrimaryKey($arguments['source_transaction_id']);
+            $target_id = $this->decodePrimaryKey($arguments['target_transaction_id']);
+            
+            $repo = app(\App\Repositories\BankTransactionRepository::class);
+            
+            if ($repo->linkTransactions($source_id, $target_id)) {
+                return new CallToolResult(
+                    content: [new TextContent(
+                        text: json_encode([
+                            'success' => true,
+                            'message' => 'Transactions linked successfully'
+                        ], JSON_PRETTY_PRINT)
+                    )],
+                    isError: false
+                );
+            }
+            
+            return new CallToolResult(
+                content: [new TextContent(
+                    text: json_encode([
+                        'success' => false,
+                        'error' => 'Failed to link transactions'
+                    ], JSON_PRETTY_PRINT)
+                )],
+                isError: true
+            );
+            
+        } catch (\Exception $e) {
+            $this->debugLog("Link bank transactions failed", [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return new CallToolResult(
+                content: [new TextContent(
+                    text: 'Error: ' . $e->getMessage()
+                )],
+                isError: true
+            );
+        }
+    }
+
+    private function unlinkBankTransaction(array $arguments): CallToolResult
+    {
+        $this->debugLog("unlinkBankTransaction called", ['arguments' => $arguments]);
+        
+        try {
+            $transaction_id = $this->decodePrimaryKey($arguments['transaction_id']);
+            
+            $repo = app(\App\Repositories\BankTransactionRepository::class);
+            
+            if ($repo->unlinkTransaction($transaction_id)) {
+                return new CallToolResult(
+                    content: [new TextContent(
+                        text: json_encode([
+                            'success' => true,
+                            'message' => 'Transaction unlinked successfully'
+                        ], JSON_PRETTY_PRINT)
+                    )],
+                    isError: false
+                );
+            }
+            
+            return new CallToolResult(
+                content: [new TextContent(
+                    text: json_encode([
+                        'success' => false,
+                        'error' => 'Failed to unlink transaction'
+                    ], JSON_PRETTY_PRINT)
+                )],
+                isError: true
+            );
+            
+        } catch (\Exception $e) {
+            $this->debugLog("Unlink bank transaction failed", [
+                'error' => $e->getMessage(),
+                'trace' => $e->getTraceAsString()
+            ]);
+            
+            return new CallToolResult(
+                content: [new TextContent(
+                    text: 'Error: ' . $e->getMessage()
+                )],
+                isError: true
+            );
+        }
+    }
+
+    private function autoDetectTransfers(array $arguments): CallToolResult
+    {
+        $this->debugLog("autoDetectTransfers called", ['arguments' => $arguments]);
+        
+        try {
+            $days = $arguments['days'] ?? 7;
+            $company = \App\Models\Company::first(); // TODO: Use auth context when available
+            
+            $repo = app(\App\Repositories\BankTransactionRepository::class);
+            $count = $repo->autoDetectTransfers($company->id, $days);
+            
+            return new CallToolResult(
+                content: [new TextContent(
+                    text: json_encode([
+                        'success' => true,
+                        'linked_count' => $count,
+                        'message' => "Linked {$count} transfer pairs"
+                    ], JSON_PRETTY_PRINT)
+                )],
+                isError: false
+            );
+            
+        } catch (\Exception $e) {
+            $this->debugLog("Auto detect transfers failed", [
                 'error' => $e->getMessage(),
                 'trace' => $e->getTraceAsString()
             ]);
