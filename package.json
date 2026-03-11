@@ -33,6 +33,7 @@
         "chartjs-plugin-datalabels": "^2.2.0",
         "clipboard": "^2.0.10",
         "cross-env": "^7.0.3",
+        "esbuild-linux-arm64": "^0.15.18",
         "jsignature": "^2.1.3",
         "json-formatter-js": "^2.3.4",
         "laravel-mix": "^6.0.34",
